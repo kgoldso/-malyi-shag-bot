@@ -213,6 +213,22 @@ class Database:
             for row in cursor.fetchall():
                 category_stats[row[0]] = row[1]
 
+            # Получаем историю для check_achievements
+            cursor.execute(f'''
+                SELECT category, challenge, completed_at
+                FROM history
+                WHERE user_id = {param}
+                ORDER BY completed_at DESC
+            ''', (user_id,))
+
+            history = []
+            for row in cursor.fetchall():
+                history.append({
+                    'category': row[0],
+                    'challenge': row[1],
+                    'completed_at': row[2]
+                })
+
             # Базовая статистика из таблицы users
             stats = {
                 'user_id': user['user_id'],
@@ -224,7 +240,7 @@ class Database:
                 'last_completed_date': user['last_completed_date'],
                 'achievements': json.loads(user['achievements']) if user['achievements'] else [],
                 'category_stats': category_stats,
-                'history': []  # Для совместимости с check_achievements
+                'history': history
             }
 
             return stats
@@ -332,11 +348,10 @@ class Database:
             return json.loads(user['purchased_items'])
         return []
 
-    def add_achievement(self, user_id: int, achievement_id: str):
+    def add_achievement(self, user_id: int, achievement_id: str) -> bool:
         """Добавить достижение"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'SELECT achievements FROM users WHERE user_id = {param}', (user_id,))
@@ -344,14 +359,20 @@ class Database:
 
             if row:
                 achievements = json.loads(row[0]) if row[0] else []
-                if achievement_id not in achievements:
-                    achievements.append(achievement_id)
-                    cursor.execute(f'''
-                        UPDATE users 
-                        SET achievements = {param}
-                        WHERE user_id = {param}
-                    ''', (json.dumps(achievements), user_id))
-                    conn.commit()
+
+                # Проверяем, нет ли уже такого достижения
+                if achievement_id in achievements:
+                    return False
+
+                achievements.append(achievement_id)
+                cursor.execute(f'''
+                    UPDATE users
+                    SET achievements = {param}
+                    WHERE user_id = {param}
+                ''', (json.dumps(achievements), user_id))
+                conn.commit()
+                return True
+            return False
         finally:
             conn.close()
 
@@ -576,6 +597,7 @@ class Database:
                 ''', (user_id, current_category, current_challenge))
 
             conn.commit()
+            print(f"DEBUG: Completed challenge for user {user_id}, added 5 coins")
 
             # Получаем обновленные данные
             cursor.execute(f'SELECT * FROM users WHERE user_id = {param}', (user_id,))

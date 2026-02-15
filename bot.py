@@ -363,7 +363,7 @@ async def complete_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Проверка достижений
     try:
-        user_data = db.get_user(user_id)
+        user_data = db.get_stats(user_id)  # ← Используем get_stats!
         new_achievements = check_achievements(user_id, user_data)
     except Exception as e:
         logger.error(f"Ошибка при проверке достижений: {e}")
