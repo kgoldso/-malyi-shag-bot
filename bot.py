@@ -661,18 +661,16 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     users = db.get_all_users()
     total_users = len(users)
-
-    total_challenges = 0
-    total_active_today = 0
     today = date.today().isoformat()
 
     conn = db.get_connection()
     cursor = conn.cursor()
 
+    # ИСПРАВЛЕНИЕ: используем правильные названия колонок
     cursor.execute('SELECT SUM(totalcompleted) FROM users')
-    totalchallenges = cursor.fetchone()[0] or 0
-    cursor.execute('SELECT COUNT(*) FROM users WHERE lastcompleteddate = ?', (today,))
+    total_challenges = cursor.fetchone()[0] or 0
 
+    cursor.execute('SELECT COUNT(*) FROM users WHERE lastcompleteddate = ?', (today,))
     total_active_today = cursor.fetchone()[0] or 0
 
     cursor.execute('SELECT AVG(streak) FROM users')
@@ -695,7 +693,6 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 ✅ Активных сегодня: *{total_active_today}*
 🎯 Всего челленджей: *{total_challenges}*
 🔥 Средний streak: *{avg_streak:.1f}* дней
-
 ⚠️ Новых жалоб: *{pending_reports}*
 📋 Жалоб за сегодня: *{reports_today}*
 🚫 Забаненных: *{banned_users}*
@@ -703,7 +700,6 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 📈 Показатели растут! 🚀"""
 
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_back')]]
-
     await query.edit_message_text(
         message,
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -909,12 +905,12 @@ async def admin_reports_handler(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = []
     for report in reports[:10]:
         report_id = report['id']
-        user_id = report['userid']  # было user_id
+        user_id = report['userid']  # БЕЗ подчеркивания!
         username = report['username']
-        message = report['message']
-        created_at = report['createdat']  # было created_at
+        message_text = report['message']
+        created_at = report['createdat']  # БЕЗ подчеркивания!
 
-        short_msg = message[:30] + "..." if len(message) > 30 else message
+        short_msg = message_text[:30] + "..." if len(message_text) > 30 else message_text
         keyboard.append([
             InlineKeyboardButton(
                 f"@{username or 'Без имени'}: {short_msg}",
