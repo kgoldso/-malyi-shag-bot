@@ -666,7 +666,6 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     conn = db.get_connection()
     cursor = conn.cursor()
 
-    # ИСПРАВЛЕНИЕ: используем правильные названия колонок
     cursor.execute('SELECT SUM(totalcompleted) FROM users')
     total_challenges = cursor.fetchone()[0] or 0
 
