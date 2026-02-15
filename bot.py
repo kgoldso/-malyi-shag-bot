@@ -139,7 +139,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /start"""
     user = update.effective_user
 
-    # Добавляем/обновляем пользователя в БД
+    # Добавляем/обновляем пользователя
     db.add_user(
         user_id=user.id,
         username=user.username or user.first_name,
@@ -149,9 +149,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     welcome_text = f"""👋 Привет, *{user.first_name}*!
 
-🌱 *Добро пожаловать в бот "Малый Шаг"!*
+🌱 Добро пожаловать в бот "Малый Шаг"!
 
-Этот бот поможет вам выработать полезные привычки через маленькие ежедневные задания.
+Этот бот поможет тебе выработать полезные привычки через маленькие ежедневные задания.
 
 🎯 *Каждый день:*
 • Выполняй простое задание
@@ -159,21 +159,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Увеличивай streak 🔥
 • Открывай достижения 🏆
 
-📊 Начни с команды /challenge чтобы получить своё первое задание!
-
-💡 *Доступные команды:*
-/challenge - Получить задание дня
-/stats - Моя статистика
-/shop - Магазин наград
-/achievements - Мои достижения
-/report - Сообщить об ошибке
-"""
+📊 Начни с кнопки ниже чтобы получить свой первый челлендж!"""
 
     keyboard = [
-        [InlineKeyboardButton("🎯 Получить задание", callback_data='get_challenge')],
-        [InlineKeyboardButton("📊 Статистика", callback_data='view_stats')],
-        [InlineKeyboardButton("🏪 Магазин", callback_data='shop')],
-        [InlineKeyboardButton("🏆 Достижения", callback_data='achievements')]
+        [InlineKeyboardButton("🎯 Получить челлендж", callback_data='back_to_categories')],
+        [InlineKeyboardButton("📊 Моя статистика", callback_data='stats')],
+        [InlineKeyboardButton("🏆 Достижения", callback_data='achievements')],
     ]
 
     await update.message.reply_text(
@@ -1484,6 +1475,15 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_approve_report_handler, pattern='^admin_approve_'))
     application.add_handler(CallbackQueryHandler(admin_reject_report_handler, pattern='^admin_reject_'))
     application.add_handler(CallbackQueryHandler(admin_warn_report_handler, pattern='^admin_warn_'))
+
+    # Обработчики для inline кнопок
+    application.add_handler(CallbackQueryHandler(category_handler, pattern='^cat'))
+    application.add_handler(CallbackQueryHandler(another_challenge_handler, pattern='^another$'))
+    application.add_handler(CallbackQueryHandler(complete_handler, pattern='^complete$'))
+    application.add_handler(CallbackQueryHandler(stats_handler, pattern='^stats$'))
+    application.add_handler(CallbackQueryHandler(achievements_handler, pattern='^achievements$'))
+    application.add_handler(CallbackQueryHandler(back_to_categories_handler, pattern='^back_to_categories$'))
+
 
     # Обработчик текстовых сообщений (ПОСЛЕДНИМ!)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_message_handler))
