@@ -107,6 +107,21 @@ class Database:
                 )
             ''')
 
+        # Добавляем колонки для текущего челленджа, если их нет
+        try:
+            if self.use_postgres:
+                cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS current_challenge TEXT")
+                cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS current_category TEXT")
+            else:
+                cursor.execute("PRAGMA table_info(users)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if 'current_challenge' not in columns:
+                    cursor.execute('ALTER TABLE users ADD COLUMN current_challenge TEXT')
+                if 'current_category' not in columns:
+                    cursor.execute('ALTER TABLE users ADD COLUMN current_category TEXT')
+        except Exception as e:
+            pass  # Колонки уже существуют
+
         conn.commit()
         conn.close()
 
@@ -462,9 +477,12 @@ class Database:
         cursor = conn.cursor()
         try:
             param = '%s' if self.use_postgres else '?'
-            # Сохраняем текущий челлендж и категорию (можно добавить колонки в БД)
-            # Пока просто игнорируем, т.к. в схеме БД нет этих полей
-            pass
+            cursor.execute(f'''
+                UPDATE users
+                SET current_challenge = {param}, current_category = {param}
+                WHERE user_id = {param}
+            ''', (challenge, category, user_id))
+            conn.commit()
         finally:
             conn.close()
 
@@ -477,27 +495,53 @@ class Database:
         today = date.today().isoformat()
 
         # Проверка, не завершал ли уже сегодня
-        if user['last_completed_date'] == today:
+        if user.get('last_completed_date') == today:
             return {
                 'success': False,
                 'message': 'Ты уже выполнил челлендж сегодня!'
             }
 
-        # Обновляем streak
-        self.update_streak(user_id)
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            param = '%s' if self.use_postgres else '?'
 
-        # Добавляем монеты
-        coins_earned = 5
-        self.add_coins(user_id, coins_earned)
+            # Обновляем streak и статистику
+            cursor.execute(f'''
+                UPDATE users
+                SET streak = streak + 1,
+                    longest_streak = CASE 
+                        WHEN streak + 1 > longest_streak THEN streak + 1 
+                        ELSE longest_streak 
+                    END,
+                    total_completed = total_completed + 1,
+                    coins = coins + 5,
+                    last_completed_date = {param}
+                WHERE user_id = {param}
+            ''', (today, user_id))
+            conn.commit()
 
-        # Получаем обновленные данные
-        updated_user = self.get_user(user_id)
+            # Получаем обновленные данные
+            cursor.execute(f'SELECT * FROM users WHERE user_id = {param}', (user_id,))
+            row = cursor.fetchone()
 
-        return {
-            'success': True,
-            'streak': updated_user['streak'],
-            'total': updated_user['total_completed'],
-            'coins_earned': coins_earned,
-            'total_coins': updated_user['coins']
-        }
+            if self.use_postgres:
+                columns = [desc[0] for desc in cursor.description]
+                updated_user = dict(zip(columns, row))
+            else:
+                updated_user = dict(row)
+
+            return {
+                'success': True,
+                'streak': updated_user['streak'],
+                'total': updated_user['total_completed'],
+                'coins_earned': 5,
+                'total_coins': updated_user['coins']
+            }
+        except Exception as e:
+            conn.rollback()
+            return {'success': False, 'message': f'Ошибка: {str(e)}'}
+        finally:
+            conn.close()
+
 
