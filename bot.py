@@ -666,10 +666,11 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     conn = db.get_connection()
     cursor = conn.cursor()
 
-    cursor.execute('SELECT SUM(totalcompleted) FROM users')
+    # ПРАВИЛЬНЫЕ НАЗВАНИЯ С ПОДЧЕРКИВАНИЕМ!
+    cursor.execute('SELECT SUM(total_completed) FROM users')
     total_challenges = cursor.fetchone()[0] or 0
 
-    cursor.execute('SELECT COUNT(*) FROM users WHERE lastcompleteddate = ?', (today,))
+    cursor.execute('SELECT COUNT(*) FROM users WHERE last_completed_date = ?', (today,))
     total_active_today = cursor.fetchone()[0] or 0
 
     cursor.execute('SELECT AVG(streak) FROM users')
@@ -678,7 +679,7 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     cursor.execute('SELECT COUNT(*) FROM reports WHERE status = "pending"')
     pending_reports = cursor.fetchone()[0] or 0
 
-    cursor.execute('SELECT COUNT(*) FROM reports WHERE DATE(createdat) = ?', (today,))
+    cursor.execute('SELECT COUNT(*) FROM reports WHERE DATE(created_at) = ?', (today,))
     reports_today = cursor.fetchone()[0] or 0
 
     cursor.execute('SELECT COUNT(*) FROM users WHERE warnings >= 3')
@@ -717,13 +718,13 @@ async def admin_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     conn = db.get_connection()
     cursor = conn.cursor()
 
+    # ПРАВИЛЬНЫЕ НАЗВАНИЯ С ПОДЧЕРКИВАНИЕМ!
     cursor.execute('''
-        SELECT userid, username, totalcompleted, streak, coins, warnings
+        SELECT user_id, username, total_completed, streak, coins, warnings
         FROM users
-        ORDER BY totalcompleted DESC
+        ORDER BY total_completed DESC
         LIMIT 15
     ''')
-
     users = cursor.fetchall()
     conn.close()
 
@@ -736,11 +737,10 @@ async def admin_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             username = username or "Без имени"
             warn_text = f" ⚠️{warnings}" if warnings > 0 else ""
             message += f"{idx}. @{username}{warn_text}\n"
-            message += f"   ID: `{user_id}`\n"
-            message += f"   ✅ {total} | 🔥 {streak} | 💰 {coins}\n\n"
+            message += f" ID: `{user_id}`\n"
+            message += f" ✅ {total} | 🔥 {streak} | 💰 {coins}\n\n"
 
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_back')]]
-
     await query.edit_message_text(
         message,
         reply_markup=InlineKeyboardMarkup(keyboard),
