@@ -152,6 +152,31 @@ class Database:
         finally:
             conn.close()
 
+    def get_stats(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Получить статистику пользователя"""
+        user = self.get_user(user_id)
+        if not user:
+            return None
+
+        # Базовая статистика из таблицы users
+        stats = {
+            'user_id': user['user_id'],
+            'username': user['username'],
+            'streak': user['streak'],
+            'longest_streak': user['longest_streak'],
+            'total_completed': user['total_completed'],
+            'coins': user['coins'],
+            'last_completed_date': user['last_completed_date'],
+            'achievements': json.loads(user['achievements']) if user['achievements'] else [],
+            'category_stats': {}
+        }
+
+        # Получаем историю по категориям из challenges (если есть такая таблица)
+        # Пока что возвращаем пустую статистику по категориям
+        # Можно расширить позже, если будет таблица с историей
+
+        return stats
+
     def update_streak(self, user_id: int):
         """Обновить streak"""
         conn = self.get_connection()
@@ -430,3 +455,49 @@ class Database:
             return result and result[0] >= 3
         finally:
             conn.close()
+
+    def update_challenge(self, user_id: int, challenge: str, category: str):
+        """Обновить текущий челлендж пользователя"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            param = '%s' if self.use_postgres else '?'
+            # Сохраняем текущий челлендж и категорию (можно добавить колонки в БД)
+            # Пока просто игнорируем, т.к. в схеме БД нет этих полей
+            pass
+        finally:
+            conn.close()
+
+    def complete_challenge(self, user_id: int) -> Dict[str, Any]:
+        """Завершить челлендж"""
+        user = self.get_user(user_id)
+        if not user:
+            return {'success': False, 'message': 'Пользователь не найден'}
+
+        today = date.today().isoformat()
+
+        # Проверка, не завершал ли уже сегодня
+        if user['last_completed_date'] == today:
+            return {
+                'success': False,
+                'message': 'Ты уже выполнил челлендж сегодня!'
+            }
+
+        # Обновляем streak
+        self.update_streak(user_id)
+
+        # Добавляем монеты
+        coins_earned = 5
+        self.add_coins(user_id, coins_earned)
+
+        # Получаем обновленные данные
+        updated_user = self.get_user(user_id)
+
+        return {
+            'success': True,
+            'streak': updated_user['streak'],
+            'total': updated_user['total_completed'],
+            'coins_earned': coins_earned,
+            'total_coins': updated_user['coins']
+        }
+
