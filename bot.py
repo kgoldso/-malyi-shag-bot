@@ -112,33 +112,51 @@ async def delete_old_bot_message(context: ContextTypes.DEFAULT_TYPE, chat_id: in
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
+    """Команда /start"""
     user = update.effective_user
-    user_id = user.id
-    username = user.username or user.first_name
 
-    # Регистрация пользователя
-    db.add_user(user_id, username)
-
-    welcome_text = """Привет! 👋 Я бот 'Малый Шаг' 🌱
-
-Помогу тебе формировать полезные привычки через маленькие ежедневные действия.
-
-Каждый день я предложу тебе простой челлендж на 5-20 минут.
-
-Выбери категорию:"""
-
-    keyboard = get_category_keyboard()
-
-    # НЕ удаляем сообщение /start от пользователя
-    # Отправляем новое сообщение
-    sent_message = await update.message.reply_text(
-        welcome_text,
-        reply_markup=keyboard
+    # Добавляем/обновляем пользователя в БД
+    db.add_user(
+        user_id=user.id,
+        username=user.username or user.first_name,
+        first_name=user.first_name,
+        language_code=user.language_code or 'ru'
     )
 
-    # Сохраняем ID нового сообщения
-    context.user_data['last_bot_message_id'] = sent_message.message_id
+    welcome_text = f"""👋 Привет, *{user.first_name}*!
+
+🌱 *Добро пожаловать в бот "Малый Шаг"!*
+
+Этот бот поможет вам выработать полезные привычки через маленькие ежедневные задания.
+
+🎯 *Каждый день:*
+• Выполняй простое задание
+• Получай монеты 🪙
+• Увеличивай streak 🔥
+• Открывай достижения 🏆
+
+📊 Начни с команды /challenge чтобы получить своё первое задание!
+
+💡 *Доступные команды:*
+/challenge - Получить задание дня
+/stats - Моя статистика
+/shop - Магазин наград
+/achievements - Мои достижения
+/report - Сообщить об ошибке
+"""
+
+    keyboard = [
+        [InlineKeyboardButton("🎯 Получить задание", callback_data='get_challenge')],
+        [InlineKeyboardButton("📊 Статистика", callback_data='view_stats')],
+        [InlineKeyboardButton("🏪 Магазин", callback_data='shop')],
+        [InlineKeyboardButton("🏆 Достижения", callback_data='achievements')]
+    ]
+
+    await update.message.reply_text(
+        welcome_text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
 
 
 def get_category_keyboard():
