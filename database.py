@@ -320,3 +320,136 @@ def complete_challenge(self, user_id: int) -> Dict[str, Any]:
         'coins_earned': int(coins_earned),
         'total_coins': int(new_coins)
     }
+
+
+def init_db(self):
+    """Инициализация базы данных"""
+    conn = self.get_connection()
+    cursor = conn.cursor()
+
+    # Таблица пользователей
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            streak INTEGER DEFAULT 0,
+            total_completed INTEGER DEFAULT 0,
+            last_completed_date TEXT,
+            current_challenge TEXT,
+            current_category TEXT,
+            history TEXT DEFAULT '[]',
+            coins INTEGER DEFAULT 0,
+            achievements TEXT DEFAULT '[]',
+            warnings INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # НОВАЯ ТАБЛИЦА: Жалобы пользователей
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT,
+            message TEXT,
+            status TEXT DEFAULT 'pending',
+            admin_response TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+    ''')
+
+    conn.commit()
+    conn.close()
+
+
+# Добавьте новые методы в класс Database:
+
+def add_report(self, user_id: int, username: str, message: str):
+    """Добавить жалобу/отчет от пользователя"""
+    conn = self.get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        INSERT INTO reports (user_id, username, message)
+        VALUES (?, ?, ?)
+    ''', (user_id, username, message))
+
+    conn.commit()
+    conn.close()
+
+
+def get_pending_reports(self):
+    """Получить все необработанные жалобы"""
+    conn = self.get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT id, user_id, username, message, created_at
+        FROM reports
+        WHERE status = 'pending'
+        ORDER BY created_at DESC
+    ''')
+
+    reports = cursor.fetchall()
+    conn.close()
+    return reports
+
+
+def get_user_reports(self, user_id: int):
+    """Получить все жалобы конкретного пользователя"""
+    conn = self.get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT id, message, status, admin_response, created_at
+        FROM reports
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+    ''', (user_id,))
+
+    reports = cursor.fetchall()
+    conn.close()
+    return reports
+
+
+def update_report_status(self, report_id: int, status: str, admin_response: str = None):
+    """Обновить статус жалобы"""
+    conn = self.get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        UPDATE reports
+        SET status = ?, admin_response = ?
+        WHERE id = ?
+    ''', (status, admin_response, report_id))
+
+    conn.commit()
+    conn.close()
+
+
+def add_warning(self, user_id: int):
+    """Добавить предупреждение пользователю"""
+    conn = self.get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        UPDATE users
+        SET warnings = warnings + 1
+        WHERE user_id = ?
+    ''', (user_id,))
+
+    conn.commit()
+    conn.close()
+
+
+def delete_user_data(self, user_id: int):
+    """Удалить пользователя"""
+    conn = self.get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
+    cursor.execute('DELETE FROM reports WHERE user_id = ?', (user_id,))
+
+    conn.commit()
+    conn.close()

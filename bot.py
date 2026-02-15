@@ -583,7 +583,9 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # bot.py
-# ... существующий код ...
+# ... существующие импорты ...
+
+# ============= АДМИН ПАНЕЛЬ =============
 
 def is_admin(user_id: int) -> bool:
     """Проверка является ли пользователь админом"""
@@ -601,9 +603,10 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📊 Статистика бота", callback_data='admin_stats')],
         [InlineKeyboardButton("👥 Список пользователей", callback_data='admin_users')],
-        [InlineKeyboardButton("📢 Рассылка", callback_data='admin_broadcast')],
-        [InlineKeyboardButton("🗑️ Удалить пользователя", callback_data='admin_delete_user')],
+        [InlineKeyboardButton("📢 Рассылка", callback_data='admin_broadcast_menu')],
+        [InlineKeyboardButton("🗑️ Удалить пользователя", callback_data='admin_delete_menu')],
         [InlineKeyboardButton("💰 Выдать монеты", callback_data='admin_give_coins')],
+        [InlineKeyboardButton("⚠️ Жалобы пользователей", callback_data='admin_reports')],
     ]
 
     await update.message.reply_text(
@@ -622,11 +625,9 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ Доступ запрещен.")
         return
 
-    # Получаем всех пользователей
     users = db.get_all_users()
     total_users = len(users)
 
-    # Собираем статистику
     total_challenges = 0
     total_active_today = 0
     today = date.today().isoformat()
@@ -643,14 +644,18 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     cursor.execute('SELECT AVG(streak) FROM users')
     avg_streak = cursor.fetchone()[0] or 0
 
+    cursor.execute('SELECT COUNT(*) FROM reports WHERE status = "pending"')
+    pending_reports = cursor.fetchone()[0] or 0
+
     conn.close()
 
     message = f"""📊 *Статистика бота 'Малый Шаг'*
 
 👥 Всего пользователей: *{total_users}*
 ✅ Активных сегодня: *{total_active_today}*
-🎯 Всего выполнено челленджей: *{total_challenges}*
+🎯 Всего челленджей: *{total_challenges}*
 🔥 Средний streak: *{avg_streak:.1f}* дней
+⚠️ Новых жалоб: *{pending_reports}*
 
 📈 Показатели растут! 🚀"""
 
@@ -664,22 +669,21 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def admin_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Список пользователей для админа"""
+    """Список пользователей"""
     query = update.callback_query
     await query.answer()
 
     if not is_admin(query.from_user.id):
-        await query.edit_message_text("❌ Доступ запрещен.")
         return
 
     conn = db.get_connection()
     cursor = conn.cursor()
 
     cursor.execute('''
-        SELECT user_id, username, total_completed, streak, coins 
+        SELECT user_id, username, total_completed, streak, coins, warnings
         FROM users 
         ORDER BY total_completed DESC 
-        LIMIT 20
+        LIMIT 15
     ''')
 
     users = cursor.fetchall()
@@ -688,11 +692,12 @@ async def admin_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not users:
         message = "📋 Пользователей пока нет."
     else:
-        message = "👥 *Топ-20 пользователей:*\n\n"
+        message = "👥 *Топ-15 пользователей:*\n\n"
         for idx, user in enumerate(users, 1):
-            user_id, username, total, streak, coins = user
+            user_id, username, total, streak, coins, warnings = user
             username = username or "Без имени"
-            message += f"{idx}. @{username}\n"
+            warn_text = f" ⚠️{warnings}" if warnings > 0 else ""
+            message += f"{idx}. @{username}{warn_text}\n"
             message += f"   ID: `{user_id}`\n"
             message += f"   ✅ {total} | 🔥 {streak} | 💰 {coins}\n\n"
 
@@ -705,80 +710,438 @@ async def admin_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
-async def admin_broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало рассылки"""
+# ============= РАССЫЛКА =============
+
+async def admin_broadcast_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню рассылки"""
     query = update.callback_query
     await query.answer()
 
     if not is_admin(query.from_user.id):
-        await query.edit_message_text("❌ Доступ запрещен.")
         return
 
+    keyboard = [
+        [InlineKeyboardButton("📢 Всем пользователям", callback_data='admin_broadcast_all')],
+        [InlineKeyboardButton("👤 Одному пользователю", callback_data='admin_broadcast_one')],
+        [InlineKeyboardButton("👥 Нескольким пользователям", callback_data='admin_broadcast_multiple')],
+        [InlineKeyboardButton("◀️ Назад", callback_data='admin_back')],
+    ]
+
     await query.edit_message_text(
-        "📢 *Рассылка сообщения*\n\n"
-        "Отправьте текст сообщения, которое хотите разослать всем пользователям.\n\n"
-        "Для отмены отправьте /cancel",
+        "📢 *Рассылка сообщений*\n\nВыберите тип рассылки:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
 
-    # Сохраняем состояние "ожидание сообщения для рассылки"
-    context.user_data['awaiting_broadcast'] = True
 
-
-async def admin_give_coins_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выдать монеты пользователю"""
+async def admin_broadcast_all_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Рассылка всем"""
     query = update.callback_query
     await query.answer()
 
     if not is_admin(query.from_user.id):
-        await query.edit_message_text("❌ Доступ запрещен.")
         return
+
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_broadcast_menu')]]
+
+    await query.edit_message_text(
+        "📢 *Рассылка всем пользователям*\n\n"
+        "Отправьте текст сообщения:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+    context.user_data['awaiting_broadcast'] = 'all'
+
+
+async def admin_broadcast_one_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Рассылка одному"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_broadcast_menu')]]
+
+    await query.edit_message_text(
+        "👤 *Отправить сообщение пользователю*\n\n"
+        "Формат: `USER_ID текст сообщения`\n\n"
+        "Например: `123456789 Привет!`",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+    context.user_data['awaiting_broadcast'] = 'one'
+
+
+async def admin_broadcast_multiple_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Рассылка нескольким"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_broadcast_menu')]]
+
+    await query.edit_message_text(
+        "👥 *Отправить нескольким пользователям*\n\n"
+        "Формат (ID через пробел, потом текст):\n"
+        "`ID1 ID2 ID3 | текст сообщения`\n\n"
+        "Например:\n`123 456 789 | Привет всем!`",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+    context.user_data['awaiting_broadcast'] = 'multiple'
+
+
+# ============= УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ =============
+
+async def admin_delete_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню удаления пользователя"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_back')]]
+
+    await query.edit_message_text(
+        "🗑️ *Удаление пользователя*\n\n"
+        "Отправьте ID пользователя для удаления:\n"
+        "`123456789`",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+    context.user_data['awaiting_delete_user'] = True
+
+
+# ============= ВЫДАТЬ МОНЕТЫ =============
+
+async def admin_give_coins_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выдать монеты"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_back')]]
 
     await query.edit_message_text(
         "💰 *Выдать монеты*\n\n"
-        "Отправьте в формате:\n"
-        "`USER_ID КОЛИЧЕСТВО`\n\n"
-        "Например: `123456789 100`\n\n"
-        "Для отмены отправьте /cancel",
+        "Формат: `USER_ID КОЛИЧЕСТВО`\n\n"
+        "Например: `123456789 100`",
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
 
     context.user_data['awaiting_give_coins'] = True
 
 
-async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик текстовых сообщений для админа"""
-    user_id = update.effective_user.id
+# ============= ЖАЛОБЫ ПОЛЬЗОВАТЕЛЕЙ =============
 
+async def admin_reports_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Список жалоб"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    reports = db.get_pending_reports()
+
+    if not reports:
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_back')]]
+        await query.edit_message_text(
+            "✅ Новых жалоб нет!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    keyboard = []
+    for report in reports[:10]:  # Показываем первые 10
+        report_id, user_id, username, message, created_at = report
+        short_msg = message[:30] + "..." if len(message) > 30 else message
+        keyboard.append([
+            InlineKeyboardButton(
+                f"@{username or 'Без имени'}: {short_msg}",
+                callback_data=f'admin_report_{report_id}'
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='admin_back')])
+
+    await query.edit_message_text(
+        f"⚠️ *Жалобы пользователей* ({len(reports)})\n\nВыберите жалобу:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+
+async def admin_report_detail_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Детали жалобы"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    report_id = int(query.data.replace('admin_report_', ''))
+
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT user_id, username, message, created_at
+        FROM reports WHERE id = ?
+    ''', (report_id,))
+
+    report = cursor.fetchone()
+    conn.close()
+
+    if not report:
+        await query.edit_message_text("❌ Жалоба не найдена.")
+        return
+
+    user_id, username, message, created_at = report
+
+    text = f"""⚠️ *Жалоба #{report_id}*
+
+👤 От: @{username or 'Без имени'}
+🆔 ID: `{user_id}`
+📅 Дата: {created_at}
+
+📝 *Сообщение:*
+{message}"""
+
+    keyboard = [
+        [InlineKeyboardButton("✉️ Ответить", callback_data=f'admin_reply_{report_id}_{user_id}')],
+        [InlineKeyboardButton("✅ Одобрить", callback_data=f'admin_approve_{report_id}_{user_id}')],
+        [InlineKeyboardButton("❌ Отклонить", callback_data=f'admin_reject_{report_id}_{user_id}')],
+        [InlineKeyboardButton("⚠️ Выдать предупреждение", callback_data=f'admin_warn_{report_id}_{user_id}')],
+        [InlineKeyboardButton("◀️ К списку жалоб", callback_data='admin_reports')],
+    ]
+
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+
+async def admin_reply_report_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ответить на жалобу"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    parts = query.data.split('_')
+    report_id = int(parts[2])
+    user_id = int(parts[3])
+
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data=f'admin_report_{report_id}')]]
+
+    await query.edit_message_text(
+        "✉️ *Ответ пользователю*\n\nОтправьте текст ответа:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+    context.user_data['awaiting_reply'] = {
+        'report_id': report_id,
+        'user_id': user_id
+    }
+
+
+async def admin_approve_report_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Одобрить жалобу"""
+    query = update.callback_query
+    await query.answer("✅ Жалоба одобрена")
+
+    if not is_admin(query.from_user.id):
+        return
+
+    parts = query.data.split('_')
+    report_id = int(parts[2])
+    user_id = int(parts[3])
+
+    db.update_report_status(report_id, 'approved', 'Жалоба рассмотрена положительно')
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="✅ *Ответ от Администрации*\n\nВаша жалоба рассмотрена и принята к сведению. Спасибо за обратную связь!",
+            parse_mode='Markdown'
+        )
+    except:
+        pass
+
+    await admin_reports_handler(update, context)
+
+
+async def admin_reject_report_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отклонить жалобу"""
+    query = update.callback_query
+    await query.answer("❌ Жалоба отклонена")
+
+    if not is_admin(query.from_user.id):
+        return
+
+    parts = query.data.split('_')
+    report_id = int(parts[2])
+    user_id = int(parts[3])
+
+    db.update_report_status(report_id, 'rejected', 'Жалоба отклонена')
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="❌ *Ответ от Администрации*\n\nВаша жалоба была рассмотрена и отклонена.",
+            parse_mode='Markdown'
+        )
+    except:
+        pass
+
+    await admin_reports_handler(update, context)
+
+
+async def admin_warn_report_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выдать предупреждение"""
+    query = update.callback_query
+    await query.answer()
+
+    if not is_admin(query.from_user.id):
+        return
+
+    parts = query.data.split('_')
+    report_id = int(parts[2])
+    user_id = int(parts[3])
+
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data=f'admin_report_{report_id}')]]
+
+    await query.edit_message_text(
+        "⚠️ *Предупреждение пользователю*\n\nОтправьте текст предупреждения:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+    context.user_data['awaiting_warning'] = {
+        'report_id': report_id,
+        'user_id': user_id
+    }
+
+
+# ============= ОБРАБОТЧИК СООБЩЕНИЙ ДЛЯ АДМИНА =============
+
+async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик текстовых сообщений"""
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    # Для обычных пользователей - проверка на жалобу
+    if context.user_data.get('awaiting_report'):
+        context.user_data['awaiting_report'] = False
+        username = update.effective_user.username or update.effective_user.first_name
+
+        db.add_report(user_id, username, text)
+
+        await update.message.reply_text(
+            "✅ Ваше сообщение отправлено администрации!\n\n"
+            "Мы рассмотрим его в ближайшее время."
+        )
+
+        # Уведомляем админа
+        try:
+            await context.bot.send_message(
+                chat_id=config.ADMIN_ID,
+                text=f"⚠️ Новая жалоба от @{username} (ID: {user_id})\n\n{text}"
+            )
+        except:
+            pass
+
+        return
+
+    # Только для админа дальше
     if not is_admin(user_id):
         return
 
-    # Рассылка
-    if context.user_data.get('awaiting_broadcast'):
-        context.user_data['awaiting_broadcast'] = False
+    # Рассылка всем
+    if context.user_data.get('awaiting_broadcast') == 'all':
+        context.user_data['awaiting_broadcast'] = None
 
-        text = update.message.text
         users = db.get_all_users()
-
         sent = 0
         failed = 0
 
         await update.message.reply_text(f"📤 Начинаю рассылку для {len(users)} пользователей...")
 
-        for user_id in users:
+        for target_user_id in users:
             try:
-                await context.bot.send_message(chat_id=user_id, text=text)
+                await context.bot.send_message(chat_id=target_user_id, text=text)
                 sent += 1
-                await asyncio.sleep(0.05)  # Защита от лимитов
+                await asyncio.sleep(0.05)
             except Exception as e:
                 failed += 1
-                logger.error(f"Не удалось отправить пользователю {user_id}: {e}")
 
         await update.message.reply_text(
-            f"✅ Рассылка завершена!\n\n"
-            f"📤 Отправлено: {sent}\n"
-            f"❌ Ошибок: {failed}"
+            f"✅ Рассылка завершена!\n\n📤 Отправлено: {sent}\n❌ Ошибок: {failed}"
         )
+        return
+
+    # Рассылка одному
+    if context.user_data.get('awaiting_broadcast') == 'one':
+        context.user_data['awaiting_broadcast'] = None
+
+        try:
+            parts = text.split(' ', 1)
+            target_user_id = int(parts[0])
+            message = parts[1]
+
+            await context.bot.send_message(chat_id=target_user_id, text=message)
+            await update.message.reply_text(f"✅ Сообщение отправлено пользователю {target_user_id}")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка: {e}")
+        return
+
+    # Рассылка нескольким
+    if context.user_data.get('awaiting_broadcast') == 'multiple':
+        context.user_data['awaiting_broadcast'] = None
+
+        try:
+            ids_part, message = text.split('|', 1)
+            ids = [int(x.strip()) for x in ids_part.strip().split()]
+            message = message.strip()
+
+            sent = 0
+            for target_user_id in ids:
+                try:
+                    await context.bot.send_message(chat_id=target_user_id, text=message)
+                    sent += 1
+                    await asyncio.sleep(0.05)
+                except:
+                    pass
+
+            await update.message.reply_text(f"✅ Отправлено {sent} из {len(ids)} пользователям")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка: {e}\n\nФормат: `ID1 ID2 | текст`", parse_mode='Markdown')
+        return
+
+    # Удаление пользователя
+    if context.user_data.get('awaiting_delete_user'):
+        context.user_data['awaiting_delete_user'] = False
+
+        try:
+            target_user_id = int(text.strip())
+            db.delete_user_data(target_user_id)
+            await update.message.reply_text(f"✅ Пользователь {target_user_id} удален")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка: {e}")
         return
 
     # Выдача монет
@@ -786,17 +1149,13 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['awaiting_give_coins'] = False
 
         try:
-            parts = update.message.text.split()
+            parts = text.split()
             target_user_id = int(parts[0])
             amount = int(parts[1])
 
             db.add_coins(target_user_id, amount)
+            await update.message.reply_text(f"✅ Выдано {amount} монет пользователю {target_user_id}")
 
-            await update.message.reply_text(
-                f"✅ Выдано {amount} монет пользователю {target_user_id}"
-            )
-
-            # Уведомляем пользователя
             try:
                 await context.bot.send_message(
                     chat_id=target_user_id,
@@ -804,11 +1163,78 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 )
             except:
                 pass
-
         except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}\n\nФормат: `USER_ID КОЛИЧЕСТВО`", parse_mode='Markdown')
-
+            await update.message.reply_text(f"❌ Ошибка: {e}")
         return
+
+    # Ответ на жалобу
+    if context.user_data.get('awaiting_reply'):
+        data = context.user_data['awaiting_reply']
+        context.user_data['awaiting_reply'] = None
+
+        report_id = data['report_id']
+        target_user_id = data['user_id']
+
+        db.update_report_status(report_id, 'answered', text)
+
+        try:
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=f"✉️ *Ответ от Администрации:*\n\n{text}",
+                parse_mode='Markdown'
+            )
+            await update.message.reply_text("✅ Ответ отправлен пользователю")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка отправки: {e}")
+        return
+
+    # Предупреждение
+    if context.user_data.get('awaiting_warning'):
+        data = context.user_data['awaiting_warning']
+        context.user_data['awaiting_warning'] = None
+
+        report_id = data['report_id']
+        target_user_id = data['user_id']
+
+        db.add_warning(target_user_id)
+        db.update_report_status(report_id, 'warned', text)
+
+        try:
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=f"⚠️ *ПРЕДУПРЕЖДЕНИЕ от Администрации:*\n\n{text}",
+                parse_mode='Markdown'
+            )
+            await update.message.reply_text("✅ Предупреждение выдано")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка: {e}")
+        return
+
+
+# ============= ЖАЛОБА ДЛЯ ОБЫЧНЫХ ПОЛЬЗОВАТЕЛЕЙ =============
+
+async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подать жалобу/сообщение об ошибке"""
+    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data='cancel_report')]]
+
+    await update.message.reply_text(
+        "📝 *Сообщить об ошибке/проблеме*\n\n"
+        "Опишите проблему или ошибку, которую вы заметили.\n"
+        "Администрация рассмотрит ваше сообщение.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+    context.user_data['awaiting_report'] = True
+
+
+async def cancel_report_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена подачи жалобы"""
+    query = update.callback_query
+    await query.answer()
+
+    context.user_data.clear()
+    await query.edit_message_text("❌ Отменено.")
 
 
 async def admin_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -822,8 +1248,10 @@ async def admin_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     keyboard = [
         [InlineKeyboardButton("📊 Статистика бота", callback_data='admin_stats')],
         [InlineKeyboardButton("👥 Список пользователей", callback_data='admin_users')],
-        [InlineKeyboardButton("📢 Рассылка", callback_data='admin_broadcast')],
+        [InlineKeyboardButton("📢 Рассылка", callback_data='admin_broadcast_menu')],
+        [InlineKeyboardButton("🗑️ Удалить пользователя", callback_data='admin_delete_menu')],
         [InlineKeyboardButton("💰 Выдать монеты", callback_data='admin_give_coins')],
+        [InlineKeyboardButton("⚠️ Жалобы пользователей", callback_data='admin_reports')],
     ]
 
     await query.edit_message_text(
@@ -833,25 +1261,18 @@ async def admin_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
-async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отмена текущего действия"""
-    context.user_data.clear()
-    await update.message.reply_text("❌ Действие отменено.")
-
-
 def main():
     """Запуск бота"""
-    # Создание приложения
     application = Application.builder().token(config.BOT_TOKEN).build()
 
-    # Регистрация обработчиков команд
+    # Команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("achievements", achievements_command))
-    application.add_handler(CommandHandler("admin", admin_command))  # НОВОЕ
-    application.add_handler(CommandHandler("cancel", cancel_command))  # НОВОЕ
+    application.add_handler(CommandHandler("admin", admin_command))
+    application.add_handler(CommandHandler("report", report_command))  # НОВОЕ
 
-    # Регистрация обработчиков callback
+    # Обычные callback
     application.add_handler(CallbackQueryHandler(category_handler, pattern='^cat_'))
     application.add_handler(CallbackQueryHandler(complete_handler, pattern='^complete$'))
     application.add_handler(CallbackQueryHandler(another_challenge_handler, pattern='^another$'))
@@ -859,21 +1280,33 @@ def main():
     application.add_handler(CallbackQueryHandler(achievements_handler, pattern='^achievements$'))
     application.add_handler(CallbackQueryHandler(back_to_categories_handler, pattern='^back_to_categories$'))
 
-    # НОВЫЕ админ callback
+    # Админ callback
     application.add_handler(CallbackQueryHandler(admin_stats_handler, pattern='^admin_stats$'))
     application.add_handler(CallbackQueryHandler(admin_users_handler, pattern='^admin_users$'))
-    application.add_handler(CallbackQueryHandler(admin_broadcast_handler, pattern='^admin_broadcast$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_menu_handler, pattern='^admin_broadcast_menu$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_all_handler, pattern='^admin_broadcast_all$'))
+    application.add_handler(CallbackQueryHandler(admin_broadcast_one_handler, pattern='^admin_broadcast_one$'))
+    application.add_handler(
+        CallbackQueryHandler(admin_broadcast_multiple_handler, pattern='^admin_broadcast_multiple$'))
+    application.add_handler(CallbackQueryHandler(admin_delete_menu_handler, pattern='^admin_delete_menu$'))
     application.add_handler(CallbackQueryHandler(admin_give_coins_handler, pattern='^admin_give_coins$'))
+    application.add_handler(CallbackQueryHandler(admin_reports_handler, pattern='^admin_reports$'))
+    application.add_handler(CallbackQueryHandler(admin_report_detail_handler, pattern='^admin_report_'))
+    application.add_handler(CallbackQueryHandler(admin_reply_report_handler, pattern='^admin_reply_'))
+    application.add_handler(CallbackQueryHandler(admin_approve_report_handler, pattern='^admin_approve_'))
+    application.add_handler(CallbackQueryHandler(admin_reject_report_handler, pattern='^admin_reject_'))
+    application.add_handler(CallbackQueryHandler(admin_warn_report_handler, pattern='^admin_warn_'))
     application.add_handler(CallbackQueryHandler(admin_back_handler, pattern='^admin_back$'))
+    application.add_handler(CallbackQueryHandler(cancel_report_handler, pattern='^cancel_report$'))
 
-    # Обработчик текстовых сообщений для админа (должен быть последним!)
+    # Обработчик текстовых сообщений (должен быть последним!)
     from telegram.ext import MessageHandler, filters
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_message_handler))
 
     # Обработчик ошибок
     application.add_error_handler(error_handler)
 
-    # Настройка ежедневных напоминаний в 9:00 по московскому времени
+    # Напоминания
     job_queue = application.job_queue
     job_queue.run_daily(
         send_daily_reminder,
@@ -881,7 +1314,6 @@ def main():
         days=(0, 1, 2, 3, 4, 5, 6)
     )
 
-    # Запуск бота
     logger.info("Бот 'Малый Шаг' запущен!")
     logger.info(f"Напоминания настроены на {config.REMINDER_TIME.strftime('%H:%M')} {config.TIMEZONE}")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
