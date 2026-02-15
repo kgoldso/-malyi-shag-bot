@@ -1,605 +1,432 @@
-# database.py
-import sqlite3
+import os
 import json
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 import config
 
+# Определяем тип БД
+USE_POSTGRES = os.getenv('DATABASE_URL') is not None
+
+if USE_POSTGRES:
+    import psycopg2
+    from psycopg2.extras import Json
+else:
+    import sqlite3
+
 
 class Database:
-    """Класс для работы с базой данных SQLite"""
+    def __init__(self):
+        self.use_postgres = USE_POSTGRES
 
-    def __init__(self, db_name: str = config.DATABASE_NAME):
-        self.db_name = db_name
+        if self.use_postgres:
+            self.db_url = os.getenv('DATABASE_URL')
+            # Railway иногда даёт postgres://, но psycopg2 требует postgresql://
+            if self.db_url.startswith('postgres://'):
+                self.db_url = self.db_url.replace('postgres://', 'postgresql://', 1)
+        else:
+            self.db_name = config.DATABASE_NAME
+
         self.init_db()
 
     def get_connection(self):
-        """Создание подключения к БД"""
-        return sqlite3.connect(self.db_name)
+        """Получить подключение к БД"""
+        if self.use_postgres:
+            return psycopg2.connect(self.db_url)
+        else:
+            conn = sqlite3.connect(self.db_name)
+            conn.row_factory = sqlite3.Row
+            return conn
 
     def init_db(self):
         """Инициализация базы данных"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                streak INTEGER DEFAULT 0,
-                total_completed INTEGER DEFAULT 0,
-                last_completed_date TEXT,
-                current_challenge TEXT,
-                current_category TEXT,
-                history TEXT DEFAULT '[]',
-                coins INTEGER DEFAULT 0,
-                achievements TEXT DEFAULT '[]',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        conn.commit()
-        conn.close()
-
-    def add_user(self, user_id: int, username: str) -> bool:
-        """Добавление нового пользователя"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
+        if self.use_postgres:
+            # PostgreSQL синтаксис
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    language_code TEXT DEFAULT 'ru',
+                    streak INTEGER DEFAULT 0,
+                    longest_streak INTEGER DEFAULT 0,
+                    total_completed INTEGER DEFAULT 0,
+                    coins INTEGER DEFAULT 0,
+                    last_completed_date TEXT,
+                    purchased_items TEXT DEFAULT '[]',
+                    achievements TEXT DEFAULT '[]',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    warnings INTEGER DEFAULT 0
+                )
+            ''')
 
             cursor.execute('''
-                INSERT OR IGNORE INTO users (user_id, username)
-                VALUES (?, ?)
-            ''', (user_id, username))
+                CREATE TABLE IF NOT EXISTS reports (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    username TEXT,
+                    message TEXT,
+                    status TEXT DEFAULT 'pending',
+                    admin_response TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            ''')
+        else:
+            # SQLite синтаксис
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    language_code TEXT DEFAULT 'ru',
+                    streak INTEGER DEFAULT 0,
+                    longest_streak INTEGER DEFAULT 0,
+                    total_completed INTEGER DEFAULT 0,
+                    coins INTEGER DEFAULT 0,
+                    last_completed_date TEXT,
+                    purchased_items TEXT DEFAULT '[]',
+                    achievements TEXT DEFAULT '[]',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    warnings INTEGER DEFAULT 0
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    username TEXT,
+                    message TEXT,
+                    status TEXT DEFAULT 'pending',
+                    admin_response TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            ''')
+
+        conn.commit()
+        conn.close()
+
+    def add_user(self, user_id: int, username: str, first_name: str, language_code: str = 'ru'):
+        """Добавить пользователя"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            if self.use_postgres:
+                cursor.execute('''
+                    INSERT INTO users (user_id, username, first_name, language_code)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (user_id) DO NOTHING
+                ''', (user_id, username, first_name, language_code))
+            else:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO users (user_id, username, first_name, language_code)
+                    VALUES (?, ?, ?, ?)
+                ''', (user_id, username, first_name, language_code))
 
             conn.commit()
+        finally:
             conn.close()
-            return True
-        except Exception as e:
-            print(f"Ошибка добавления пользователя: {e}")
-            return False
 
     def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Получение данных пользователя"""
+        """Получить данные пользователя"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        # Явно указываем какие колонки нам нужны
-        cursor.execute('''
-            SELECT user_id, username, streak, total_completed, last_completed_date,
-                   current_challenge, current_category, history, 
-                   COALESCE(coins, 0) as coins, 
-                   COALESCE(achievements, '[]') as achievements,
-                   created_at
-            FROM users 
-            WHERE user_id = ?
-        ''', (user_id,))
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'SELECT * FROM users WHERE user_id = {param}', (user_id,))
+            row = cursor.fetchone()
 
-        row = cursor.fetchone()
-        conn.close()
+            if row:
+                if self.use_postgres:
+                    columns = [desc[0] for desc in cursor.description]
+                    return dict(zip(columns, row))
+                else:
+                    return dict(row)
+            return None
+        finally:
+            conn.close()
 
-        if row:
-            return {
-                'user_id': row[0],
-                'username': row[1],
-                'streak': row[2] or 0,
-                'total_completed': row[3] or 0,
-                'last_completed_date': row[4],
-                'current_challenge': row[5],
-                'current_category': row[6],
-                'history': json.loads(row[7]) if row[7] else [],
-                'coins': row[8] or 0,
-                'achievements': json.loads(row[9]) if row[9] and row[9] != '[]' else [],
-                'created_at': row[10] if len(row) > 10 else None
-            }
-        return None
-
-    def update_challenge(self, user_id: int, challenge: str, category: str):
-        """Обновление текущего челленджа"""
+    def update_streak(self, user_id: int):
+        """Обновить streak"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            UPDATE users 
-            SET current_challenge = ?, current_category = ?
-            WHERE user_id = ?
-        ''', (challenge, category, user_id))
+        try:
+            today = date.today().isoformat()
+            param = '%s' if self.use_postgres else '?'
 
-        conn.commit()
-        conn.close()
+            cursor.execute(f'''
+                UPDATE users 
+                SET streak = streak + 1,
+                    longest_streak = GREATEST(longest_streak, streak + 1),
+                    total_completed = total_completed + 1,
+                    last_completed_date = {param}
+                WHERE user_id = {param}
+            ''', (today, user_id))
 
-    def complete_challenge(self, user_id: int) -> Dict[str, Any]:
-        """Отметка челленджа как выполненного"""
-        user = self.get_user(user_id)
-        if not user:
-            return {'success': False, 'message': 'Пользователь не найден'}
+            conn.commit()
+        finally:
+            conn.close()
 
-        today = date.today().isoformat()
-        last_date = user['last_completed_date']
-
-        # Проверка, что уже выполнил сегодня
-        if last_date == today:
-            return {
-                'success': False,
-                'message': '❌ Ты уже выполнил челлендж сегодня! Приходи завтра 😊'
-            }
-
-        # Проверка streak
-        if last_date:
-            last_date_obj = datetime.fromisoformat(last_date).date()
-            from datetime import timedelta
-            yesterday = datetime.now().date() - timedelta(days=1)
-
-            if last_date_obj == yesterday:
-                new_streak = user['streak'] + 1
-            else:
-                new_streak = 1
-        else:
-            new_streak = 1
-
-        # Награда: 5 монет за каждый челлендж
-        coins_earned = 5
-        current_coins = user.get('coins') or 0  # Защита от None
-        new_coins = int(current_coins) + int(coins_earned)
-
-        # Обновление истории
-        history = user['history']
-        history.append({
-            'date': today,
-            'challenge': user['current_challenge'],
-            'category': user['current_category']
-        })
-
-        # Обновление БД
+    def reset_streak(self, user_id: int):
+        """Сбросить streak"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        new_total = user['total_completed'] + 1
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'''
+                UPDATE users 
+                SET streak = 0
+                WHERE user_id = {param}
+            ''', (user_id,))
 
-        cursor.execute('''
-            UPDATE users 
-            SET streak = ?,
-                total_completed = ?,
-                last_completed_date = ?,
-                history = ?,
-                coins = ?
-            WHERE user_id = ?
-        ''', (int(new_streak), int(new_total), today, json.dumps(history, ensure_ascii=False), int(new_coins), user_id))
-
-        conn.commit()
-        conn.close()
-
-        # Возвращаем все значения как int
-        return {
-            'success': True,
-            'streak': int(new_streak),
-            'total': int(new_total),
-            'coins_earned': int(coins_earned),
-            'total_coins': int(new_coins)
-        }
+            conn.commit()
+        finally:
+            conn.close()
 
     def add_coins(self, user_id: int, amount: int):
-        """Добавление монет пользователю"""
+        """Добавить монеты"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            UPDATE users 
-            SET coins = coins + ?
-            WHERE user_id = ?
-        ''', (amount, user_id))
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'''
+                UPDATE users 
+                SET coins = coins + {param}
+                WHERE user_id = {param}
+            ''', (amount, user_id))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
-    def add_achievement(self, user_id: int, achievement_id: str) -> bool:
-        """Добавление достижения пользователю"""
+    def get_coins(self, user_id: int) -> int:
+        """Получить количество монет"""
         user = self.get_user(user_id)
-        if not user:
-            return False
+        return user['coins'] if user else 0
 
-        achievements = user['achievements']
-        if achievement_id in achievements:
-            return False  # Уже есть
-
-        achievements.append(achievement_id)
-
+    def purchase_item(self, user_id: int, item_id: str, cost: int) -> bool:
+        """Купить предмет"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            UPDATE users 
-            SET achievements = ?
-            WHERE user_id = ?
-        ''', (json.dumps(achievements), user_id))
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'SELECT coins, purchased_items FROM users WHERE user_id = {param}', (user_id,))
+            row = cursor.fetchone()
 
-        conn.commit()
-        conn.close()
+            if not row:
+                return False
 
-        return True
+            coins = row[0]
+            purchased_items = json.loads(row[1]) if row[1] else []
 
-    # database.py
-    # В класс Database добавьте эти методы:
+            if coins < cost or item_id in purchased_items:
+                return False
+
+            purchased_items.append(item_id)
+            new_coins = coins - cost
+
+            cursor.execute(f'''
+                UPDATE users 
+                SET coins = {param}, purchased_items = {param}
+                WHERE user_id = {param}
+            ''', (new_coins, json.dumps(purchased_items), user_id))
+
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+    def get_purchased_items(self, user_id: int) -> list:
+        """Получить купленные предметы"""
+        user = self.get_user(user_id)
+        if user and user['purchased_items']:
+            return json.loads(user['purchased_items'])
+        return []
+
+    def add_achievement(self, user_id: int, achievement_id: str):
+        """Добавить достижение"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'SELECT achievements FROM users WHERE user_id = {param}', (user_id,))
+            row = cursor.fetchone()
+
+            if row:
+                achievements = json.loads(row[0]) if row[0] else []
+                if achievement_id not in achievements:
+                    achievements.append(achievement_id)
+                    cursor.execute(f'''
+                        UPDATE users 
+                        SET achievements = {param}
+                        WHERE user_id = {param}
+                    ''', (json.dumps(achievements), user_id))
+                    conn.commit()
+        finally:
+            conn.close()
+
+    def get_achievements(self, user_id: int) -> list:
+        """Получить достижения"""
+        user = self.get_user(user_id)
+        if user and user['achievements']:
+            return json.loads(user['achievements'])
+        return []
 
     def add_report(self, user_id: int, username: str, message: str):
-        """Добавить жалобу/отчет от пользователя"""
+        """Добавить жалобу"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            INSERT INTO reports (user_id, username, message)
-            VALUES (?, ?, ?)
-        ''', (user_id, username, message))
+        try:
+            if self.use_postgres:
+                cursor.execute('''
+                    INSERT INTO reports (user_id, username, message)
+                    VALUES (%s, %s, %s)
+                ''', (user_id, username, message))
+            else:
+                cursor.execute('''
+                    INSERT INTO reports (user_id, username, message)
+                    VALUES (?, ?, ?)
+                ''', (user_id, username, message))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
-    def get_pending_reports(self):
-        """Получить все необработанные жалобы"""
+    def get_pending_reports(self) -> list:
+        """Получить необработанные жалобы"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            SELECT id, user_id, username, message, created_at
-            FROM reports
-            WHERE status = 'pending'
-            ORDER BY created_at DESC
-        ''')
+        try:
+            cursor.execute("SELECT * FROM reports WHERE status = 'pending' ORDER BY created_at DESC")
+            rows = cursor.fetchall()
 
-        reports = cursor.fetchall()
-        conn.close()
-        return reports
-
-    def get_user_reports(self, user_id: int):
-        """Получить все жалобы конкретного пользователя"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT id, message, status, admin_response, created_at
-            FROM reports
-            WHERE user_id = ?
-            ORDER BY created_at DESC
-        ''', (user_id,))
-
-        reports = cursor.fetchall()
-        conn.close()
-        return reports
+            if self.use_postgres:
+                columns = [desc[0] for desc in cursor.description]
+                return [dict(zip(columns, row)) for row in rows]
+            else:
+                return [dict(row) for row in rows]
+        finally:
+            conn.close()
 
     def update_report_status(self, report_id: int, status: str, admin_response: str = None):
         """Обновить статус жалобы"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            UPDATE reports
-            SET status = ?, admin_response = ?
-            WHERE id = ?
-        ''', (status, admin_response, report_id))
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'''
+                UPDATE reports 
+                SET status = {param}, admin_response = {param}
+                WHERE id = {param}
+            ''', (status, admin_response, report_id))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
     def add_warning(self, user_id: int):
-        """Добавить предупреждение пользователю"""
+        """Добавить предупреждение"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            UPDATE users
-            SET warnings = warnings + 1
-            WHERE user_id = ?
-        ''', (user_id,))
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'''
+                UPDATE users 
+                SET warnings = warnings + 1
+                WHERE user_id = {param}
+            ''', (user_id,))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
     def delete_user_data(self, user_id: int):
-        """Удалить пользователя"""
+        """Удалить данные пользователя"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
-        cursor.execute('DELETE FROM reports WHERE user_id = ?', (user_id,))
-
-        conn.commit()
-        conn.close()
-
-    def add_coins(self, user_id: int, amount: int):
-        """Добавить монеты пользователю"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            UPDATE users
-            SET coins = coins + ?
-            WHERE user_id = ?
-        ''', (amount, user_id))
-
-        conn.commit()
-        conn.close()
-
-    def get_stats(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Получение статистики пользователя"""
-        user = self.get_user(user_id)
-        if not user:
-            return None
-
-        # Подсчет по категориям
-        history = user['history']
-        category_stats = {}
-
-        for entry in history:
-            cat = entry.get('category', 'unknown')
-            category_stats[cat] = category_stats.get(cat, 0) + 1
-
-        return {
-            'streak': user['streak'],
-            'total_completed': user['total_completed'],
-            'category_stats': category_stats,
-            'last_completed_date': user['last_completed_date'],
-            'coins': user['coins'],
-            'achievements': user['achievements']
-        }
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'DELETE FROM reports WHERE user_id = {param}', (user_id,))
+            cursor.execute(f'DELETE FROM users WHERE user_id = {param}', (user_id,))
+            conn.commit()
+        finally:
+            conn.close()
 
     def get_all_users(self) -> list:
-        """Получение всех пользователей (для рассылки напоминаний)"""
+        """Получить всех пользователей"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('SELECT user_id FROM users')
-        users = [row[0] for row in cursor.fetchall()]
-
-        conn.close()
-        return users
+        try:
+            cursor.execute('SELECT user_id FROM users')
+            return [row[0] for row in cursor.fetchall()]
+        finally:
+            conn.close()
 
     def get_last_report_time(self, user_id: int):
-        """Получить время последней жалобы пользователя"""
+        """Получить время последней жалобы"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            SELECT created_at 
-            FROM reports 
-            WHERE user_id = ? 
-            ORDER BY created_at DESC 
-            LIMIT 1
-        ''', (user_id,))
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'''
+                SELECT created_at 
+                FROM reports 
+                WHERE user_id = {param}
+                ORDER BY created_at DESC 
+                LIMIT 1
+            ''', (user_id,))
 
-        result = cursor.fetchone()
-        conn.close()
-
-        return result[0] if result else None
+            result = cursor.fetchone()
+            return result[0] if result else None
+        finally:
+            conn.close()
 
     def count_user_reports_today(self, user_id: int) -> int:
-        """Подсчитать количество жалоб пользователя за сегодня"""
+        """Подсчитать жалобы за сегодня"""
         today = date.today().isoformat()
-
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
-            SELECT COUNT(*) 
-            FROM reports 
-            WHERE user_id = ? AND DATE(created_at) = ?
-        ''', (user_id, today))
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'''
+                SELECT COUNT(*) 
+                FROM reports 
+                WHERE user_id = {param} AND DATE(created_at) = {param}
+            ''', (user_id, today))
 
-        count = cursor.fetchone()[0]
-        conn.close()
-
-        return count
+            return cursor.fetchone()[0]
+        finally:
+            conn.close()
 
     def is_user_banned(self, user_id: int) -> bool:
-        """Проверить забанен ли пользователь (3+ предупреждений)"""
+        """Проверка на бан"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('SELECT warnings FROM users WHERE user_id = ?', (user_id,))
-        result = cursor.fetchone()
-        conn.close()
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'SELECT warnings FROM users WHERE user_id = {param}', (user_id,))
+            result = cursor.fetchone()
 
-        if result and result[0] >= 3:
-            return True
-        return False
-
-
-def complete_challenge(self, user_id: int) -> Dict[str, Any]:
-    """Отметка челленджа как выполненного"""
-    user = self.get_user(user_id)
-    if not user:
-        return {'success': False, 'message': 'Пользователь не найден'}
-
-    today = date.today().isoformat()
-    last_date = user['last_completed_date']
-
-    # Проверка, что уже выполнил сегодня
-    if last_date == today:
-        return {
-            'success': False,
-            'message': '❌ Ты уже выполнил челлендж сегодня! Приходи завтра 😊'
-        }
-
-    # Проверка streak
-    if last_date:
-        last_date_obj = datetime.fromisoformat(last_date).date()
-        yesterday = datetime.now().date()
-        from datetime import timedelta
-        yesterday = yesterday - timedelta(days=1)
-
-        if last_date_obj == yesterday:
-            new_streak = user['streak'] + 1
-        else:
-            new_streak = 1
-    else:
-        new_streak = 1
-
-    # Награда: 5 монет за каждый челлендж
-    coins_earned = 5
-    new_coins = int(user.get('coins', 0)) + coins_earned  # Явное преобразование
-
-    # Обновление истории
-    history = user['history']
-    history.append({
-        'date': today,
-        'challenge': user['current_challenge'],
-        'category': user['current_category']
-    })
-
-    # Обновление БД
-    conn = self.get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        UPDATE users 
-        SET streak = ?,
-            total_completed = total_completed + 1,
-            last_completed_date = ?,
-            history = ?,
-            coins = ?
-        WHERE user_id = ?
-    ''', (new_streak, today, json.dumps(history, ensure_ascii=False), new_coins, user_id))
-
-    conn.commit()
-    conn.close()
-
-    # Возвращаем все значения как int
-    return {
-        'success': True,
-        'streak': int(new_streak),
-        'total': int(user['total_completed'] + 1),
-        'coins_earned': int(coins_earned),
-        'total_coins': int(new_coins)
-    }
-
-
-def init_db(self):
-    """Инициализация базы данных"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-
-    # Таблица пользователей
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            streak INTEGER DEFAULT 0,
-            total_completed INTEGER DEFAULT 0,
-            last_completed_date TEXT,
-            current_challenge TEXT,
-            current_category TEXT,
-            history TEXT DEFAULT '[]',
-            coins INTEGER DEFAULT 0,
-            achievements TEXT DEFAULT '[]',
-            warnings INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-
-    # НОВАЯ ТАБЛИЦА: Жалобы пользователей
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            username TEXT,
-            message TEXT,
-            status TEXT DEFAULT 'pending',
-            admin_response TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (user_id)
-        )
-    ''')
-
-    conn.commit()
-    conn.close()
-
-
-# Добавьте новые методы в класс Database:
-
-def add_report(self, user_id: int, username: str, message: str):
-    """Добавить жалобу/отчет от пользователя"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        INSERT INTO reports (user_id, username, message)
-        VALUES (?, ?, ?)
-    ''', (user_id, username, message))
-
-    conn.commit()
-    conn.close()
-
-
-def get_pending_reports(self):
-    """Получить все необработанные жалобы"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        SELECT id, user_id, username, message, created_at
-        FROM reports
-        WHERE status = 'pending'
-        ORDER BY created_at DESC
-    ''')
-
-    reports = cursor.fetchall()
-    conn.close()
-    return reports
-
-
-def get_user_reports(self, user_id: int):
-    """Получить все жалобы конкретного пользователя"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        SELECT id, message, status, admin_response, created_at
-        FROM reports
-        WHERE user_id = ?
-        ORDER BY created_at DESC
-    ''', (user_id,))
-
-    reports = cursor.fetchall()
-    conn.close()
-    return reports
-
-
-def update_report_status(self, report_id: int, status: str, admin_response: str = None):
-    """Обновить статус жалобы"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        UPDATE reports
-        SET status = ?, admin_response = ?
-        WHERE id = ?
-    ''', (status, admin_response, report_id))
-
-    conn.commit()
-    conn.close()
-
-
-def add_warning(self, user_id: int):
-    """Добавить предупреждение пользователю"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        UPDATE users
-        SET warnings = warnings + 1
-        WHERE user_id = ?
-    ''', (user_id,))
-
-    conn.commit()
-    conn.close()
-
-
-def delete_user_data(self, user_id: int):
-    """Удалить пользователя"""
-    conn = self.get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
-    cursor.execute('DELETE FROM reports WHERE user_id = ?', (user_id,))
-
-    conn.commit()
-    conn.close()
+            return result and result[0] >= 3
+        finally:
+            conn.close()
