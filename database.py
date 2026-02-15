@@ -107,6 +107,30 @@ class Database:
                 )
             ''')
 
+            # Таблица истории челленджей
+            if self.use_postgres:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS history (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT,
+                        category TEXT,
+                        challenge TEXT,
+                        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users(user_id)
+                    )
+                ''')
+            else:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER,
+                        category TEXT,
+                        challenge TEXT,
+                        completed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users(user_id)
+                    )
+                ''')
+
         # Добавляем колонки для текущего челленджа, если их нет
         try:
             if self.use_postgres:
@@ -173,24 +197,39 @@ class Database:
         if not user:
             return None
 
-        # Базовая статистика из таблицы users
-        stats = {
-            'user_id': user['user_id'],
-            'username': user['username'],
-            'streak': user['streak'],
-            'longest_streak': user['longest_streak'],
-            'total_completed': user['total_completed'],
-            'coins': user['coins'],
-            'last_completed_date': user['last_completed_date'],
-            'achievements': json.loads(user['achievements']) if user['achievements'] else [],
-            'category_stats': {}
-        }
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Считаем статистику по категориям из истории
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'''
+                SELECT category, COUNT(*) as count
+                FROM history
+                WHERE user_id = {param}
+                GROUP BY category
+            ''', (user_id,))
 
-        # Получаем историю по категориям из challenges (если есть такая таблица)
-        # Пока что возвращаем пустую статистику по категориям
-        # Можно расширить позже, если будет таблица с историей
+            category_stats = {}
+            for row in cursor.fetchall():
+                category_stats[row[0]] = row[1]
 
-        return stats
+            # Базовая статистика из таблицы users
+            stats = {
+                'user_id': user['user_id'],
+                'username': user['username'],
+                'streak': user['streak'],
+                'longest_streak': user['longest_streak'],
+                'total_completed': user['total_completed'],
+                'coins': user['coins'],
+                'last_completed_date': user['last_completed_date'],
+                'achievements': json.loads(user['achievements']) if user['achievements'] else [],
+                'category_stats': category_stats,
+                'history': []  # Для совместимости с check_achievements
+            }
+
+            return stats
+        finally:
+            conn.close()
 
     def update_streak(self, user_id: int):
         """Обновить streak"""
@@ -506,6 +545,10 @@ class Database:
         try:
             param = '%s' if self.use_postgres else '?'
 
+            # Получаем текущий челлендж и категорию
+            current_challenge = user.get('current_challenge', '')
+            current_category = user.get('current_category', 'unknown')
+
             # Обновляем streak и статистику
             cursor.execute(f'''
                 UPDATE users
@@ -519,6 +562,19 @@ class Database:
                     last_completed_date = {param}
                 WHERE user_id = {param}
             ''', (today, user_id))
+
+            # Добавляем в историю
+            if self.use_postgres:
+                cursor.execute('''
+                    INSERT INTO history (user_id, category, challenge)
+                    VALUES (%s, %s, %s)
+                ''', (user_id, current_category, current_challenge))
+            else:
+                cursor.execute('''
+                    INSERT INTO history (user_id, category, challenge)
+                    VALUES (?, ?, ?)
+                ''', (user_id, current_category, current_challenge))
+
             conn.commit()
 
             # Получаем обновленные данные
@@ -543,5 +599,6 @@ class Database:
             return {'success': False, 'message': f'Ошибка: {str(e)}'}
         finally:
             conn.close()
+
 
 
