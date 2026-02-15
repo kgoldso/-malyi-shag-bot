@@ -218,6 +218,107 @@ class Database:
 
         return True
 
+    # database.py
+    # В класс Database добавьте эти методы:
+
+    def add_report(self, user_id: int, username: str, message: str):
+        """Добавить жалобу/отчет от пользователя"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            INSERT INTO reports (user_id, username, message)
+            VALUES (?, ?, ?)
+        ''', (user_id, username, message))
+
+        conn.commit()
+        conn.close()
+
+    def get_pending_reports(self):
+        """Получить все необработанные жалобы"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT id, user_id, username, message, created_at
+            FROM reports
+            WHERE status = 'pending'
+            ORDER BY created_at DESC
+        ''')
+
+        reports = cursor.fetchall()
+        conn.close()
+        return reports
+
+    def get_user_reports(self, user_id: int):
+        """Получить все жалобы конкретного пользователя"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT id, message, status, admin_response, created_at
+            FROM reports
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+        ''', (user_id,))
+
+        reports = cursor.fetchall()
+        conn.close()
+        return reports
+
+    def update_report_status(self, report_id: int, status: str, admin_response: str = None):
+        """Обновить статус жалобы"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            UPDATE reports
+            SET status = ?, admin_response = ?
+            WHERE id = ?
+        ''', (status, admin_response, report_id))
+
+        conn.commit()
+        conn.close()
+
+    def add_warning(self, user_id: int):
+        """Добавить предупреждение пользователю"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            UPDATE users
+            SET warnings = warnings + 1
+            WHERE user_id = ?
+        ''', (user_id,))
+
+        conn.commit()
+        conn.close()
+
+    def delete_user_data(self, user_id: int):
+        """Удалить пользователя"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
+        cursor.execute('DELETE FROM reports WHERE user_id = ?', (user_id,))
+
+        conn.commit()
+        conn.close()
+
+    def add_coins(self, user_id: int, amount: int):
+        """Добавить монеты пользователю"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            UPDATE users
+            SET coins = coins + ?
+            WHERE user_id = ?
+        ''', (amount, user_id))
+
+        conn.commit()
+        conn.close()
+
     def get_stats(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Получение статистики пользователя"""
         user = self.get_user(user_id)
