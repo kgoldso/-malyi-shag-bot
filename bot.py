@@ -1043,7 +1043,7 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     text = update.message.text
 
-    # Для обычных пользователей - проверка на жалобу
+    # ========== ДЛЯ ОБЫЧНЫХ ПОЛЬЗОВАТЕЛЕЙ ==========
     if context.user_data.get('awaiting_report'):
         context.user_data['awaiting_report'] = False
         username = update.effective_user.username or update.effective_user.first_name
@@ -1051,22 +1051,24 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         db.add_report(user_id, username, text)
 
         await update.message.reply_text(
-            "✅ Ваше сообщение отправлено администрации!\n\n"
-            "Мы рассмотрим его в ближайшее время."
+            "✅ *Ваше сообщение отправлено администрации!*\n\n"
+            "Мы рассмотрим его в ближайшее время.",
+            parse_mode='Markdown'
         )
 
         # Уведомляем админа
         try:
             await context.bot.send_message(
                 chat_id=config.ADMIN_ID,
-                text=f"⚠️ Новая жалоба от @{username} (ID: {user_id})\n\n{text}"
+                text=f"⚠️ *Новая жалоба*\n\nОт: @{username}\nID: `{user_id}`\n\n{text}",
+                parse_mode='Markdown'
             )
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Не удалось уведомить админа: {e}")
 
         return
 
-    # Только для админа дальше
+    # ========== ТОЛЬКО ДЛЯ АДМИНА ДАЛЬШЕ ==========
     if not is_admin(user_id):
         return
 
@@ -1214,13 +1216,9 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подать жалобу/сообщение об ошибке"""
-    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data='cancel_report')]]
-
     await update.message.reply_text(
         "📝 *Сообщить об ошибке/проблеме*\n\n"
-        "Опишите проблему или ошибку, которую вы заметили.\n"
-        "Администрация рассмотрит ваше сообщение.",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        "Напишите ваше сообщение следующим сообщением.",
         parse_mode='Markdown'
     )
 
@@ -1262,6 +1260,58 @@ async def admin_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def main():
     """Запуск бота"""
+
+    # ============= МИГРАЦИЯ БАЗЫ ДАННЫХ =============
+    import sqlite3
+    try:
+        conn = sqlite3.connect('habits_bot.db')
+        cursor = conn.cursor()
+
+        # Проверяем и добавляем колонку warnings
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if 'warnings' not in columns:
+            cursor.execute('ALTER TABLE users ADD COLUMN warnings INTEGER DEFAULT 0')
+            logger.info("✅ Добавлена колонка warnings")
+
+        # Создаём таблицу reports если её нет
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                username TEXT,
+                message TEXT,
+                status TEXT DEFAULT 'pending',
+                admin_response TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        logger.info("✅ Таблица reports создана/проверена")
+
+        conn.commit()
+        conn.close()
+        logger.info("✅ Миграция базы данных выполнена успешно")
+    except Exception as e:
+        logger.error(f"❌ Ошибка миграции: {e}")
+
+    # ============= СОЗДАНИЕ ПРИЛОЖЕНИЯ =============
+    application = Application.builder().token(config.BOT_TOKEN).build()
+
+    # Установка команд меню
+    async def post_init(app: Application):
+        from telegram import BotCommand
+        commands = [
+            BotCommand("start", "🌱 Начать работу"),
+            BotCommand("stats", "📊 Моя статистика"),
+            BotCommand("achievements", "🏆 Достижения"),
+            BotCommand("report", "📝 Сообщить об ошибке"),
+        ]
+        await app.bot.set_my_commands(commands)
+        logger.info("✅ Команды меню установлены")
+
+    application.post_init = post_init
+
     application = Application.builder().token(config.BOT_TOKEN).build()
 
     # Команды
