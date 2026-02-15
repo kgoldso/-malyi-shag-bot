@@ -15,6 +15,29 @@ from telegram.ext import (
 from telegram.error import BadRequest
 import config
 from database import Database
+from functools import wraps
+
+
+def ensure_user(func):
+    """Декоратор для автоматической регистрации пользователя"""
+
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.effective_user
+
+        # Проверяем существует ли пользователь
+        if not db.get_user(user.id):
+            db.add_user(
+                user_id=user.id,
+                username=user.username or user.first_name,
+                first_name=user.first_name,
+                language_code=user.language_code or 'ru'
+            )
+
+        return await func(update, context)
+
+    return wrapper
+
 
 # Настройка логирования
 logging.basicConfig(
@@ -111,6 +134,7 @@ async def delete_old_bot_message(context: ContextTypes.DEFAULT_TYPE, chat_id: in
             pass  # Сообщение уже удалено или недоступно
 
 
+@ensure_user
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /start"""
     user = update.effective_user
