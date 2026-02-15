@@ -669,10 +669,10 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     conn = db.get_connection()
     cursor = conn.cursor()
 
-    cursor.execute('SELECT SUM(total_completed) FROM users')
-    total_challenges = cursor.fetchone()[0] or 0
+    cursor.execute('SELECT SUM(totalcompleted) FROM users')
+    totalchallenges = cursor.fetchone()[0] or 0
+    cursor.execute('SELECT COUNT(*) FROM users WHERE lastcompleteddate = ?', (today,))
 
-    cursor.execute('SELECT COUNT(*) FROM users WHERE last_completed_date = ?', (today,))
     total_active_today = cursor.fetchone()[0] or 0
 
     cursor.execute('SELECT AVG(streak) FROM users')
@@ -723,9 +723,9 @@ async def admin_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     cursor = conn.cursor()
 
     cursor.execute('''
-        SELECT user_id, username, total_completed, streak, coins, warnings
-        FROM users 
-        ORDER BY total_completed DESC 
+        SELECT userid, username, totalcompleted, streak, coins, warnings
+        FROM users
+        ORDER BY totalcompleted DESC
         LIMIT 15
     ''')
 
