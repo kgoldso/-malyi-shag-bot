@@ -646,6 +646,12 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     cursor.execute('SELECT COUNT(*) FROM reports WHERE status = "pending"')
     pending_reports = cursor.fetchone()[0] or 0
 
+    cursor.execute('SELECT COUNT(*) FROM reports WHERE DATE(created_at) = ?', (today,))
+    reports_today = cursor.fetchone()[0] or 0
+
+    cursor.execute('SELECT COUNT(*) FROM users WHERE warnings >= 3')
+    banned_users = cursor.fetchone()[0] or 0
+
     conn.close()
 
     message = f"""📊 *Статистика бота 'Малый Шаг'*
@@ -654,7 +660,10 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 ✅ Активных сегодня: *{total_active_today}*
 🎯 Всего челленджей: *{total_challenges}*
 🔥 Средний streak: *{avg_streak:.1f}* дней
+
 ⚠️ Новых жалоб: *{pending_reports}*
+📋 Жалоб за сегодня: *{reports_today}*
+🚫 Забаненных: *{banned_users}*
 
 📈 Показатели растут! 🚀"""
 
@@ -1046,25 +1055,62 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     # ========== ДЛЯ ОБЫЧНЫХ ПОЛЬЗОВАТЕЛЕЙ ==========
     if context.user_data.get('awaiting_report'):
         context.user_data['awaiting_report'] = False
+
+        # Дополнительная проверка перед отправкой
+        if db.is_user_banned(user_id):
+            await update.message.reply_text("⛔ Доступ заблокирован.")
+            return
+
+        reports_today = db.count_user_reports_today(user_id)
+        if reports_today >= 5:
+            await update.message.reply_text("⚠️ Лимит жалоб исчерпан на сегодня.")
+            return
+
+        # Проверка длины сообщения
+        if len(text) < 10:
+            await update.message.reply_text(
+                "❌ Сообщение слишком короткое.\n"
+                "Минимум 10 символов. Попробуйте еще раз: /report"
+            )
+            return
+
+        if len(text) > 1000:
+            await update.message.reply_text(
+                "❌ Сообщение слишком длинное.\n"
+                "Максимум 1000 символов."
+            )
+            return
+
         username = update.effective_user.username or update.effective_user.first_name
 
-        db.add_report(user_id, username, text)
-
-        await update.message.reply_text(
-            "✅ *Ваше сообщение отправлено администрации!*\n\n"
-            "Мы рассмотрим его в ближайшее время.",
-            parse_mode='Markdown'
-        )
-
-        # Уведомляем админа
         try:
-            await context.bot.send_message(
-                chat_id=config.ADMIN_ID,
-                text=f"⚠️ *Новая жалоба*\n\nОт: @{username}\nID: `{user_id}`\n\n{text}",
+            db.add_report(user_id, username, text)
+
+            remaining = 5 - reports_today - 1
+
+            await update.message.reply_text(
+                f"✅ *Ваше сообщение отправлено администрации!*\n\n"
+                f"Мы рассмотрим его в ближайшее время.\n\n"
+                f"Осталось жалоб сегодня: *{remaining}/5*",
                 parse_mode='Markdown'
             )
+
+            # Уведомляем админа
+            try:
+                await context.bot.send_message(
+                    chat_id=config.ADMIN_ID,
+                    text=f"⚠️ *Новая жалоба #{reports_today + 1}*\n\n"
+                         f"От: @{username}\n"
+                         f"ID: `{user_id}`\n"
+                         f"Жалоб сегодня: {reports_today + 1}/5\n\n"
+                         f"{text}",
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                logger.error(f"Не удалось уведомить админа: {e}")
         except Exception as e:
-            logger.error(f"Не удалось уведомить админа: {e}")
+            logger.error(f"Ошибка добавления жалобы: {e}")
+            await update.message.reply_text("❌ Произошла ошибка. Попробуйте позже.")
 
         return
 
@@ -1216,9 +1262,56 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подать жалобу/сообщение об ошибке"""
+    user_id = update.effective_user.id
+
+    # Проверка на бан (3+ предупреждений)
+    if db.is_user_banned(user_id):
+        await update.message.reply_text(
+            "⛔ *Доступ к отправке жалоб заблокирован*\n\n"
+            "У вас 3 или более предупреждений.\n"
+            "Обратитесь к администратору.",
+            parse_mode='Markdown'
+        )
+        return
+
+    # Проверка лимита жалоб за день (макс 5)
+    reports_today = db.count_user_reports_today(user_id)
+    if reports_today >= 5:
+        await update.message.reply_text(
+            "⚠️ *Лимит жалоб исчерпан*\n\n"
+            "Вы можете отправить максимум 5 жалоб в день.\n"
+            "Попробуйте завтра.",
+            parse_mode='Markdown'
+        )
+        return
+
+    # Проверка на спам (минимум 1 минута между жалобами)
+    last_report = db.get_last_report_time(user_id)
+    if last_report:
+        from datetime import datetime, timedelta
+        try:
+            last_time = datetime.fromisoformat(last_report)
+            now = datetime.now()
+            time_diff = (now - last_time).total_seconds()
+
+            if time_diff < 60:  # Меньше 1 минуты
+                wait_time = int(60 - time_diff)
+                await update.message.reply_text(
+                    f"⏳ *Подождите {wait_time} секунд*\n\n"
+                    "Между отправкой жалоб должно пройти минимум 1 минута.",
+                    parse_mode='Markdown'
+                )
+                return
+        except:
+            pass
+
+    # Показываем оставшиеся жалобы
+    remaining = 5 - reports_today
+
     await update.message.reply_text(
-        "📝 *Сообщить об ошибке/проблеме*\n\n"
-        "Напишите ваше сообщение следующим сообщением.",
+        f"📝 *Сообщить об ошибке/проблеме*\n\n"
+        f"Напишите ваше сообщение следующим сообщением.\n\n"
+        f"Осталось жалоб сегодня: *{remaining}/5*",
         parse_mode='Markdown'
     )
 

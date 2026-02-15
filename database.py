@@ -108,6 +108,56 @@ class Database:
         conn.commit()
         conn.close()
 
+        def get_last_report_time(self, user_id: int):
+            """Получить время последней жалобы пользователя"""
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT created_at 
+                FROM reports 
+                WHERE user_id = ? 
+                ORDER BY created_at DESC 
+                LIMIT 1
+            ''', (user_id,))
+
+            result = cursor.fetchone()
+            conn.close()
+
+            return result[0] if result else None
+
+        def count_user_reports_today(self, user_id: int) -> int:
+            """Подсчитать количество жалоб пользователя за сегодня"""
+            from datetime import date
+            today = date.today().isoformat()
+
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT COUNT(*) 
+                FROM reports 
+                WHERE user_id = ? AND DATE(created_at) = ?
+            ''', (user_id, today))
+
+            count = cursor.fetchone()[0]
+            conn.close()
+
+            return count
+
+        def is_user_banned(self, user_id: int) -> bool:
+            """Проверить забанен ли пользователь (3+ предупреждений)"""
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('SELECT warnings FROM users WHERE user_id = ?', (user_id,))
+            result = cursor.fetchone()
+            conn.close()
+
+            if result and result[0] >= 3:
+                return True
+            return False
+
     def complete_challenge(self, user_id: int) -> Dict[str, Any]:
         """Отметка челленджа как выполненного"""
         user = self.get_user(user_id)
