@@ -681,7 +681,7 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     cursor.execute('SELECT COUNT(*) FROM reports WHERE status = "pending"')
     pending_reports = cursor.fetchone()[0] or 0
 
-    cursor.execute('SELECT COUNT(*) FROM reports WHERE DATE(created_at) = ?', (today,))
+    cursor.execute('SELECT COUNT(*) FROM reports WHERE DATE(createdat) = ?', (today,))
     reports_today = cursor.fetchone()[0] or 0
 
     cursor.execute('SELECT COUNT(*) FROM users WHERE warnings >= 3')
@@ -907,12 +907,13 @@ async def admin_reports_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     keyboard = []
-    for report in reports[:10]:  # Показываем первые 10
+    for report in reports[:10]:
         report_id = report['id']
-        user_id = report['user_id']
+        user_id = report['userid']  # было user_id
         username = report['username']
         message = report['message']
-        created_at = report['created_at']
+        created_at = report['createdat']  # было created_at
+
         short_msg = message[:30] + "..." if len(message) > 30 else message
         keyboard.append([
             InlineKeyboardButton(
@@ -943,7 +944,7 @@ async def admin_report_detail_handler(update: Update, context: ContextTypes.DEFA
     conn = db.get_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT user_id, username, message, created_at
+        SELECT userid, username, message, createdat
         FROM reports WHERE id = ?
     ''', (report_id,))
 
