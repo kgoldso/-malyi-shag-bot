@@ -908,7 +908,11 @@ async def admin_reports_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     keyboard = []
     for report in reports[:10]:  # Показываем первые 10
-        report_id, user_id, username, message, created_at = report
+        report_id = report['id']
+        user_id = report['user_id']
+        username = report['username']
+        message = report['message']
+        created_at = report['created_at']
         short_msg = message[:30] + "..." if len(message) > 30 else message
         keyboard.append([
             InlineKeyboardButton(
@@ -1342,14 +1346,14 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Показываем оставшиеся жалобы
     remaining = 5 - reports_today
-
+    keyboard = [[InlineKeyboardButton("❌ Отменить", callback_data='cancel_report')]]
     await update.message.reply_text(
         f"📝 *Сообщить об ошибке/проблеме*\n\n"
         f"Напишите ваше сообщение следующим сообщением.\n\n"
         f"Осталось жалоб сегодня: *{remaining}/5*",
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
-
     context.user_data['awaiting_report'] = True
 
 
