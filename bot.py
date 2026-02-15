@@ -1476,15 +1476,6 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_reject_report_handler, pattern='^admin_reject_'))
     application.add_handler(CallbackQueryHandler(admin_warn_report_handler, pattern='^admin_warn_'))
 
-    # Обработчики для inline кнопок
-    application.add_handler(CallbackQueryHandler(category_handler, pattern='^cat'))
-    application.add_handler(CallbackQueryHandler(another_challenge_handler, pattern='^another$'))
-    application.add_handler(CallbackQueryHandler(complete_handler, pattern='^complete$'))
-    application.add_handler(CallbackQueryHandler(stats_handler, pattern='^stats$'))
-    application.add_handler(CallbackQueryHandler(achievements_handler, pattern='^achievements$'))
-    application.add_handler(CallbackQueryHandler(back_to_categories_handler, pattern='^back_to_categories$'))
-
-
     # Обработчик текстовых сообщений (ПОСЛЕДНИМ!)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_message_handler))
 
