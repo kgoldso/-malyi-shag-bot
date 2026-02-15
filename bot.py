@@ -183,6 +183,14 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Проверка, выполнил ли уже сегодня
     user = db.get_user(user_id)
+
+    # ИСПРАВЛЕНИЕ: Проверяем что пользователь существует
+    if not user:
+        # Если пользователя нет, регистрируем
+        username = query.from_user.username or query.from_user.first_name
+        db.add_user(user_id, username)
+        user = db.get_user(user_id)
+
     today = date.today().isoformat()
     can_complete = user['last_completed_date'] != today
 
