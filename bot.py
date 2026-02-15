@@ -1,19 +1,18 @@
-# bot.py
 import logging
 import random
 from datetime import datetime, date
 import asyncio
 from typing import Dict, List
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    MessageHandler,
+    filters
 )
 from telegram.error import BadRequest
-
 import config
 from database import Database
 
@@ -1270,7 +1269,7 @@ def main():
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("achievements", achievements_command))
     application.add_handler(CommandHandler("admin", admin_command))
-    application.add_handler(CommandHandler("report", report_command))  # НОВОЕ
+    application.add_handler(CommandHandler("report", report_command))
 
     # Обычные callback
     application.add_handler(CallbackQueryHandler(category_handler, pattern='^cat_'))
@@ -1291,16 +1290,17 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_delete_menu_handler, pattern='^admin_delete_menu$'))
     application.add_handler(CallbackQueryHandler(admin_give_coins_handler, pattern='^admin_give_coins$'))
     application.add_handler(CallbackQueryHandler(admin_reports_handler, pattern='^admin_reports$'))
-    application.add_handler(CallbackQueryHandler(admin_report_detail_handler, pattern='^admin_report_'))
+    application.add_handler(CallbackQueryHandler(admin_back_handler, pattern='^admin_back$'))
+    application.add_handler(CallbackQueryHandler(cancel_report_handler, pattern='^cancel_report$'))
+
+    # Паттерны с параметрами
+    application.add_handler(CallbackQueryHandler(admin_report_detail_handler, pattern='^admin_report_\d+$'))
     application.add_handler(CallbackQueryHandler(admin_reply_report_handler, pattern='^admin_reply_'))
     application.add_handler(CallbackQueryHandler(admin_approve_report_handler, pattern='^admin_approve_'))
     application.add_handler(CallbackQueryHandler(admin_reject_report_handler, pattern='^admin_reject_'))
     application.add_handler(CallbackQueryHandler(admin_warn_report_handler, pattern='^admin_warn_'))
-    application.add_handler(CallbackQueryHandler(admin_back_handler, pattern='^admin_back$'))
-    application.add_handler(CallbackQueryHandler(cancel_report_handler, pattern='^cancel_report$'))
 
-    # Обработчик текстовых сообщений (должен быть последним!)
-    from telegram.ext import MessageHandler, filters
+    # Обработчик текстовых сообщений (ПОСЛЕДНИМ!)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_message_handler))
 
     # Обработчик ошибок
@@ -1321,3 +1321,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
