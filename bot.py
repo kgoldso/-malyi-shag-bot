@@ -521,7 +521,9 @@ async def achievements_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not user:
         return
 
-    user_achievements = user['achievements']
+    # ИСПРАВЛЕНИЕ: Парсим JSON в список
+    import json
+    user_achievements = json.loads(user['achievements']) if user['achievements'] else []
     coins = user['coins']
 
     # Формирование списка достижений
