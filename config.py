@@ -3,6 +3,9 @@ import os
 from datetime import time
 import pytz
 
+# АДМИН ID (ваш Telegram ID)
+ADMIN_ID = 1962351971
+
 # Токен бота (получить у @BotFather)
 BOT_TOKEN = os.getenv('BOT_TOKEN', '8396248458:AAHIUPimtecA-xa0EbAQVucrTm3KDiOgKw4')
 
@@ -292,3 +295,4 @@ ACHIEVEMENTS = {
         'emoji': '🔥'
     }
 }
+
