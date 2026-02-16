@@ -404,13 +404,11 @@ class Database:
         finally:
             conn.close()
 
-    def get_pending_reports(self) -> list:
-        """Получить необработанные жалобы"""
+    def getpendingreports(self) -> list:
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
-            cursor.execute("SELECT * FROM reports WHERE status = 'pending' ORDER BY created_at DESC")
+            cursor.execute("SELECT * FROM reports WHERE status = 'pending' ORDER BY createdat DESC")
             rows = cursor.fetchall()
 
             if self.use_postgres:
