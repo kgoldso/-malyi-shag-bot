@@ -941,7 +941,7 @@ async def admin_report_detail_handler(update: Update, context: ContextTypes.DEFA
     conn = db.get_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT user_id, username, message, createdat
+        SELECT user_id, username, message, created_at
         FROM reports WHERE id = %s
     ''', (report_id,))
 
