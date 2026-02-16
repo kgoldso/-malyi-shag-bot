@@ -629,7 +629,7 @@ def is_admin(user_id: int) -> bool:
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Админ-панель"""
     user_id = update.effective_user.id
-
+652
     if not is_admin(user_id):
         await update.message.reply_text("❌ У вас нет доступа к админ-панели.")
         return
@@ -670,7 +670,7 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     cursor.execute('SELECT SUM(total_completed) FROM users')
     total_challenges = cursor.fetchone()[0] or 0
 
-    cursor.execute('SELECT COUNT(*) FROM users WHERE last_completed_date = ?', (today,))
+    cursor.execute('SELECT COUNT(*) FROM users WHERE last_completed_date = %s', (today,))
     total_active_today = cursor.fetchone()[0] or 0
 
     cursor.execute('SELECT AVG(streak) FROM users')
@@ -679,7 +679,7 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     cursor.execute('SELECT COUNT(*) FROM reports WHERE status = "pending"')
     pending_reports = cursor.fetchone()[0] or 0
 
-    cursor.execute('SELECT COUNT(*) FROM reports WHERE DATE(created_at) = ?', (today,))
+    cursor.execute('SELECT COUNT(*) FROM reports WHERE DATE(created_at) = %s', (today,))
     reports_today = cursor.fetchone()[0] or 0
 
     cursor.execute('SELECT COUNT(*) FROM users WHERE warnings >= 3')
@@ -940,7 +940,7 @@ async def admin_report_detail_handler(update: Update, context: ContextTypes.DEFA
     cursor = conn.cursor()
     cursor.execute('''
         SELECT userid, username, message, createdat
-        FROM reports WHERE id = ?
+        FROM reports WHERE id = %s
     ''', (report_id,))
 
     report = cursor.fetchone()
