@@ -755,8 +755,7 @@ async def admin_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_back')]]
     await query.edit_message_text(
         message,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
