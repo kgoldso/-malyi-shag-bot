@@ -911,7 +911,7 @@ async def admin_reports_handler(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = []
     for report in reports[:10]:
         report_id = report['id']
-        userid = report['userid']  # БЕЗ подчёркивания
+        userid = report['user_id']  # БЕЗ подчёркивания
         username = report['username']
         message_text = report['message']
 
