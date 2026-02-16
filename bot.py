@@ -676,7 +676,7 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     cursor.execute('SELECT AVG(streak) FROM users')
     avg_streak = cursor.fetchone()[0] or 0
 
-    cursor.execute('SELECT COUNT(*) FROM reports WHERE status = "pending"')
+    cursor.execute("SELECT COUNT(*) FROM reports WHERE status = 'pending'")
     pending_reports = cursor.fetchone()[0] or 0
 
     cursor.execute('SELECT COUNT(*) FROM reports WHERE DATE(created_at) = %s', (today,))
