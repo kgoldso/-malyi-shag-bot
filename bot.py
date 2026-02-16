@@ -629,8 +629,8 @@ def is_admin(user_id: int) -> bool:
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Админ-панель"""
     user_id = update.effective_user.id
-652
-        if not is_admin(user_id):
+
+    if not is_admin(user_id):
         await update.message.reply_text("❌ У вас нет доступа к админ-панели.")
         return
 
