@@ -18,6 +18,16 @@ from database import Database
 from functools import wraps
 
 
+def escape_markdown(text):
+    """Экранирует специальные символы Markdown"""
+    if not text:
+        return text
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
 def ensure_user(func):
     """Декоратор для автоматической регистрации пользователя"""
 
@@ -953,6 +963,9 @@ async def admin_report_detail_handler(update: Update, context: ContextTypes.DEFA
         return
 
     user_id, username, message, created_at = report
+
+    username = escape_markdown(username) if username else None
+    message = escape_markdown(message)
 
     text = f"""⚠️ *Жалоба #{report_id}*
 
