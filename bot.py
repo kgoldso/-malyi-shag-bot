@@ -895,43 +895,34 @@ async def admin_give_coins_handler(update: Update, context: ContextTypes.DEFAULT
 # ============= ЖАЛОБЫ ПОЛЬЗОВАТЕЛЕЙ =============
 
 async def admin_reports_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Список жалоб"""
     query = update.callback_query
     await query.answer()
 
     if not is_admin(query.from_user.id):
         return
 
-    reports = db.get_pending_reports()
+    reports = db.getpendingreports()
 
     if not reports:
-        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_back')]]
-        await query.edit_message_text(
-            "✅ Новых жалоб нет!",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data='admin_back')]]
+        await query.edit_message_text("📭 Нет ожидающих жалоб!", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     keyboard = []
     for report in reports[:10]:
         report_id = report['id']
-        user_id = report['userid']  # БЕЗ подчеркивания!
+        userid = report['userid']  # БЕЗ подчёркивания
         username = report['username']
         message_text = report['message']
-        created_at = report['createdat']  # БЕЗ подчеркивания!
 
-        short_msg = message_text[:30] + "..." if len(message_text) > 30 else message_text
-        keyboard.append([
-            InlineKeyboardButton(
-                f"@{username or 'Без имени'}: {short_msg}",
-                callback_data=f'admin_report_{report_id}'
-            )
-        ])
+        short_msg = message_text[:30] + '...' if len(message_text) > 30 else message_text
+        keyboard.append(
+            [InlineKeyboardButton(f"{username or userid}: {short_msg}", callback_data=f'admin_report_{report_id}')])
 
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='admin_back')])
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data='admin_back')])
 
     await query.edit_message_text(
-        f"⚠️ *Жалобы пользователей* ({len(reports)})\n\nВыберите жалобу:",
+        f"⚠️ Жалобы пользователей ({len(reports)}):",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
