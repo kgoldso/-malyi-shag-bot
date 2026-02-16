@@ -1389,40 +1389,6 @@ async def admin_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def main():
     """Запуск бота"""
 
-    # ============= МИГРАЦИЯ БАЗЫ ДАННЫХ =============
-    import sqlite3
-    try:
-        conn = sqlite3.connect('habits_bot.db')
-        cursor = conn.cursor()
-
-        # Проверяем и добавляем колонку warnings
-        cursor.execute("PRAGMA table_info(users)")
-        columns = [col[1] for col in cursor.fetchall()]
-        if 'warnings' not in columns:
-            cursor.execute('ALTER TABLE users ADD COLUMN warnings INTEGER DEFAULT 0')
-            logger.info("✅ Добавлена колонка warnings")
-
-        # Создаём таблицу reports если её нет
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS reports (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                username TEXT,
-                message TEXT,
-                status TEXT DEFAULT 'pending',
-                admin_response TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
-            )
-        ''')
-        logger.info("✅ Таблица reports создана/проверена")
-
-        conn.commit()
-        conn.close()
-        logger.info("✅ Миграция базы данных выполнена успешно")
-    except Exception as e:
-        logger.error(f"❌ Ошибка миграции: {e}")
-
     # ============= СОЗДАНИЕ ПРИЛОЖЕНИЯ =============
     application = Application.builder().token(config.BOT_TOKEN).build()
 
