@@ -408,7 +408,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("SELECT * FROM reports WHERE status = 'pending' ORDER BY createdat DESC")
+            cursor.execute("SELECT * FROM reports WHERE status = 'pending' ORDER BY created_at DESC")
             rows = cursor.fetchall()
 
             if self.use_postgres:
