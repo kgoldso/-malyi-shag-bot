@@ -173,6 +173,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+@ensure_user
+async def challenge_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /challenge - показывает категории"""
+    text = "🎯 *Выбери категорию челленджа!*\n\nВыбери категорию, чтобы получить задание на день:"
+    keyboard = get_category_keyboard()
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode='Markdown')
+
 
 def get_category_keyboard():
     """Создание клавиатуры с категориями"""
@@ -1419,6 +1426,7 @@ def main():
     application.add_handler(CommandHandler("achievements", achievements_command))
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("report", report_command))
+    application.add_handler(CommandHandler('challenge', challenge_command))
 
     # Обычные callback
     application.add_handler(CallbackQueryHandler(category_handler, pattern='^cat_'))
