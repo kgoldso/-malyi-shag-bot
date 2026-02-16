@@ -667,7 +667,7 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     cursor = conn.cursor()
 
     # ПРАВИЛЬНЫЕ НАЗВАНИЯ С ПОДЧЕРКИВАНИЕМ!
-    cursor.execute('SELECT SUM(total_completed) FROM users')
+    cursor.execute('SELECT SUM(total_completed) FROM users', ())
     total_challenges = cursor.fetchone()[0] or 0
 
     cursor.execute('SELECT COUNT(*) FROM users WHERE last_completed_date = %s', (today,))
