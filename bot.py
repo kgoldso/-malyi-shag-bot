@@ -220,7 +220,12 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         # Если пользователя нет, регистрируем
         username = query.from_user.username or query.from_user.first_name
-        db.add_user(user_id, username)
+        db.add_user(
+            user_id=user_id,
+            username=username,
+            first_name=query.from_user.first_name,
+            language_code=query.from_user.language_code or 'ru'
+        )
         user = db.get_user(user_id)
 
     today = date.today().isoformat()
