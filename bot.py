@@ -203,7 +203,8 @@ def get_category_keyboard():
         [
             InlineKeyboardButton(config.CATEGORIES['creative']['name'], callback_data='cat_creative'),
             InlineKeyboardButton(config.CATEGORIES['communication']['name'], callback_data='cat_communication'),
-        ]
+        ],
+        [InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -594,10 +595,11 @@ async def back_to_categories_handler(update: Update, context: ContextTypes.DEFAU
     query = update.callback_query
     await query.answer()
 
-    text = "Выбери категорию челленджа:"
+    text = "🎯 *Выбери категорию челленджа!*\n\nВыбери категорию, чтобы получить задание на день:"
     keyboard = get_category_keyboard()
 
-    await query.edit_message_text(text, reply_markup=keyboard)
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='Markdown')
+
 
 
 async def send_daily_reminder(context: ContextTypes.DEFAULT_TYPE):
