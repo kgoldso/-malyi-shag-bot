@@ -554,9 +554,9 @@ async def achievements_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     for ach_id, ach in config.ACHIEVEMENTS.items():
         if ach_id in user_achievements:
-            lines.append(f"{ach['emoji']} *{ach['name']}* ✅\n_{ach['description']}_")
+            lines.append(f"{ach['emoji']} *{ach['name']}* ✅\n_{ach['description']}_ — 💰 {ach['reward']} монет")
         else:
-            lines.append(f"🔒 *{ach['name']}*\n_{ach['description']}_")
+            lines.append(f"🔒 *{ach['name']}*\n_{ach['description']}_ — 💰 {ach['reward']} монет")
 
     lines.append(f"\n💰 Монет: *{coins}*")
     text = "\n\n".join(lines)
