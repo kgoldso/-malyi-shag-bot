@@ -199,6 +199,14 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     level = get_user_level(stats['total_completed'])
     coins = stats.get('coins', 0)
 
+    # Статистика по категориям
+    category_text = ""
+    for cat_key, count in stats['category_stats'].items():
+        if cat_key in config.CATEGORIES:
+            emoji = config.CATEGORIES[cat_key]['emoji']
+            name = config.CATEGORIES[cat_key]['name']
+            category_text += f"\n{emoji} {name}: *{count}*"
+
     text = (
         f"👤 *Профиль*\n\n"
         f"🔥 Streak: *{stats['streak']} дней*\n"
@@ -207,6 +215,9 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💰 Монет: *{coins}*\n"
         f"🏆 Достижений: *{len(user_achievements)}/{len(config.ACHIEVEMENTS)}*"
     )
+
+    if category_text:
+        text += f"\n\n*По категориям:*{category_text}"
 
     keyboard = [
         [InlineKeyboardButton("🏆 Достижения", callback_data='achievements'),
