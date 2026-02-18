@@ -559,6 +559,21 @@ class Database:
                 'message': 'Ты уже выполнил челлендж сегодня!'
             }
 
+        # Вычисляем новый стрик
+        last_date = user.get('last_completed_date')
+        current_streak = user.get('streak', 0)
+
+        if last_date is None:
+            new_streak = 1  # первый раз
+        else:
+            from datetime import timedelta
+            last_date_obj = date.fromisoformat(last_date)
+            diff = (date.today() - last_date_obj).days
+            if diff == 1:
+                new_streak = current_streak + 1  # вчера выполнял — продолжаем
+            else:
+                new_streak = 1  # пропустил день(и) — сброс
+
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -571,16 +586,16 @@ class Database:
             # Обновляем streak и статистику
             cursor.execute(f'''
                 UPDATE users
-                SET streak = streak + 1,
-                    longest_streak = CASE 
-                        WHEN streak + 1 > longest_streak THEN streak + 1 
-                        ELSE longest_streak 
+                SET streak = {param},
+                    longest_streak = CASE
+                        WHEN {param} > longest_streak THEN {param}
+                        ELSE longest_streak
                     END,
                     total_completed = total_completed + 1,
                     coins = coins + 5,
                     last_completed_date = {param}
                 WHERE user_id = {param}
-            ''', (today, user_id))
+            ''', (new_streak, new_streak, new_streak, today, user_id))
 
             # Добавляем в историю
             if self.use_postgres:
@@ -595,12 +610,10 @@ class Database:
                 ''', (user_id, current_category, current_challenge))
 
             conn.commit()
-            print(f"DEBUG: Completed challenge for user {user_id}, added 5 coins")
 
             # Получаем обновленные данные
             cursor.execute(f'SELECT * FROM users WHERE user_id = {param}', (user_id,))
             row = cursor.fetchone()
-
             if self.use_postgres:
                 columns = [desc[0] for desc in cursor.description]
                 updated_user = dict(zip(columns, row))
@@ -614,11 +627,13 @@ class Database:
                 'coins_earned': 5,
                 'total_coins': updated_user['coins']
             }
+
         except Exception as e:
             conn.rollback()
             return {'success': False, 'message': f'Ошибка: {str(e)}'}
         finally:
             conn.close()
+
 
 
 
