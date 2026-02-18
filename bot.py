@@ -147,13 +147,6 @@ async def delete_old_bot_message(context: ContextTypes.DEFAULT_TYPE, chat_id: in
 @ensure_user
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    db.add_user(
-        user_id=user.id,
-        username=user.username or user.first_name,
-        first_name=user.first_name,
-        language_code=user.language_code or 'ru'
-    )
-
     welcome_text = f"""👋 Привет, *{user.first_name}*!
 
 🌱 Добро пожаловать в бот \"Малый Шаг\"!

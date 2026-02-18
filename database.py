@@ -433,6 +433,7 @@ class Database:
         cursor = conn.cursor()
         try:
             param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'DELETE FROM history WHERE user_id = {param}', (user_id,))
             cursor.execute(f'DELETE FROM reports WHERE user_id = {param}', (user_id,))
             cursor.execute(f'DELETE FROM users WHERE user_id = {param}', (user_id,))
             conn.commit()
