@@ -146,10 +146,7 @@ async def delete_old_bot_message(context: ContextTypes.DEFAULT_TYPE, chat_id: in
 
 @ensure_user
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /start"""
     user = update.effective_user
-
-    # Добавляем/обновляем пользователя
     db.add_user(
         user_id=user.id,
         username=user.username or user.first_name,
@@ -159,7 +156,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     welcome_text = f"""👋 Привет, *{user.first_name}*!
 
-🌱 Добро пожаловать в бот "Малый Шаг"!
+🌱 Добро пожаловать в бот \"Малый Шаг\"!
 
 Этот бот поможет тебе выработать полезные привычки через маленькие ежедневные задания.
 
@@ -167,22 +164,57 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Выполняй простое задание
 • Получай монеты 🪙
 • Увеличивай streak 🔥
-• Открывай достижения 🏆
-
-📊 Начни с кнопки ниже чтобы получить свой первый челлендж!"""
+• Открывай достижения 🏆"""
 
     keyboard = [
         [InlineKeyboardButton("🎯 Получить челлендж", callback_data='back_to_categories')],
-        [InlineKeyboardButton("📊 Моя статистика", callback_data='stats'),
-         InlineKeyboardButton("🏆 Достижения", callback_data='achievements')],
+        [InlineKeyboardButton("👤 Профиль", callback_data='profile')],
         [InlineKeyboardButton("🛒 Магазин", callback_data='shop')],
     ]
-
     await update.message.reply_text(
         welcome_text,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
+
+
+async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Профиль: статистика + достижения + топ"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    stats = db.get_stats(user_id)
+    if not stats:
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')]]
+        await query.edit_message_text(
+            "У тебя пока нет данных. Начни выполнять челленджи!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    import json
+    user = db.get_user(user_id)
+    user_achievements = json.loads(user['achievements']) if user['achievements'] else []
+    level = get_user_level(stats['total_completed'])
+    coins = stats.get('coins', 0)
+
+    text = (
+        f"👤 *Профиль*\n\n"
+        f"🔥 Streak: *{stats['streak']} дней*\n"
+        f"✅ Выполнено: *{stats['total_completed']}* челленджей\n"
+        f"⭐ Уровень: *{level}*\n"
+        f"💰 Монет: *{coins}*\n"
+        f"🏆 Достижений: *{len(user_achievements)}/{len(config.ACHIEVEMENTS)}*"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🏆 Достижения", callback_data='achievements'),
+         InlineKeyboardButton("🥇 Топ игроков", callback_data='leaderboard')],
+        [InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')],
+    ]
+
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
 
 @ensure_user
@@ -210,18 +242,11 @@ def get_category_keyboard():
 
 
 def get_challenge_keyboard(can_complete: bool = True):
-    """Создание клавиатуры для челленджа"""
     keyboard = []
-
     if can_complete:
         keyboard.append([InlineKeyboardButton("✅ Выполнил", callback_data='complete')])
         keyboard.append([InlineKeyboardButton("⏭️ Другой челлендж", callback_data='another')])
-
-    keyboard.append([
-        InlineKeyboardButton("📊 Моя статистика", callback_data='stats'),
-        InlineKeyboardButton("◀️ Назад к категориям", callback_data='back_to_categories')
-    ])
-
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='back_to_categories')])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -435,9 +460,8 @@ async def complete_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_text += "\n\n" + "\n\n".join(milestone_messages)
 
     keyboard = [
-        [InlineKeyboardButton("🏆 Мои достижения", callback_data='achievements')],
-        [InlineKeyboardButton("🔄 Выбрать другую категорию", callback_data='back_to_categories')],
-        [InlineKeyboardButton("📊 Моя статистика", callback_data='stats')]
+        [InlineKeyboardButton("👤 Профиль", callback_data='profile')],
+        [InlineKeyboardButton("🔄 Ещё челлендж", callback_data='back_to_categories')],
     ]
 
     try:
@@ -595,7 +619,6 @@ async def back_to_categories_handler(update: Update, context: ContextTypes.DEFAU
     keyboard = get_category_keyboard()
 
     await query.edit_message_text(text, reply_markup=keyboard, parse_mode='Markdown')
-
 
 
 async def send_daily_reminder(context: ContextTypes.DEFAULT_TYPE):
@@ -1469,20 +1492,61 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def back_to_main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в главное меню из магазина"""
     query = update.callback_query
     await query.answer()
     user = query.from_user
 
     keyboard = [
         [InlineKeyboardButton("🎯 Получить челлендж", callback_data='back_to_categories')],
-        [InlineKeyboardButton("📊 Моя статистика", callback_data='stats'),
-         InlineKeyboardButton("🏆 Достижения", callback_data='achievements')],
+        [InlineKeyboardButton("👤 Профиль", callback_data='profile')],
         [InlineKeyboardButton("🛒 Магазин", callback_data='shop')],
+    ]
+    await query.edit_message_text(
+        f"👋 Привет, *{user.first_name}*!\n\nВыбери действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+
+async def leaderboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Топ игроков"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    top = db.get_leaderboard()
+
+    if not top:
+        text = "🥇 *Топ игроков*\n\nПока никто не выполнил ни одного челленджа. Будь первым!"
+    else:
+        medals = ['🥇', '🥈', '🥉']
+        lines = ["🏆 *Топ игроков по стрику*\n"]
+
+        for i, user in enumerate(top):
+            medal = medals[i] if i < 3 else f"{i + 1}."
+            name = user['first_name'] or user['username'] or 'Игрок'
+            streak = user['streak']
+            total = user['total_completed']
+
+            # Подсвечиваем текущего пользователя
+            current_user = db.get_user(user_id)
+            is_me = (
+                current_user and
+                current_user['first_name'] == user['first_name'] and
+                current_user['streak'] == streak
+            )
+            marker = " ← ты" if is_me else ""
+
+            lines.append(f"{medal} *{name}* — 🔥 {streak} дней | ✅ {total}{marker}")
+
+        text = "\n".join(lines)
+
+    keyboard = [
+        [InlineKeyboardButton("◀️ Назад в профиль", callback_data='profile')],
     ]
 
     await query.edit_message_text(
-        f"👋 Привет, *{user.first_name}*!\n\nВыбери действие:",
+        text,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
@@ -1551,6 +1615,8 @@ def main():
     application.add_handler(CallbackQueryHandler(shop_handler, pattern='^shop$'))
     application.add_handler(CallbackQueryHandler(buy_handler, pattern='^buy_'))
     application.add_handler(CallbackQueryHandler(back_to_main_handler, pattern='^back_to_main$'))
+    application.add_handler(CallbackQueryHandler(profile_handler, pattern='^profile$'))
+    application.add_handler(CallbackQueryHandler(leaderboard_handler, pattern='^leaderboard$'))
 
     # Админ callback
     application.add_handler(CallbackQueryHandler(admin_stats_handler, pattern='^admin_stats$'))

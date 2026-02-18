@@ -345,6 +345,31 @@ class Database:
             return json.loads(user['achievements'])
         return []
 
+    def get_leaderboard(self):
+        """Топ-10 пользователей по стрику и по выполненным"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT first_name, username, streak, total_completed, coins
+            FROM users
+            ORDER BY streak DESC, total_completed DESC
+            LIMIT 10
+        ''')
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [
+            {
+                'first_name': row[0],
+                'username': row[1],
+                'streak': row[2],
+                'total_completed': row[3],
+                'coins': row[4],
+            }
+            for row in rows
+        ]
+
     def add_report(self, user_id: int, username: str, message: str):
         """Добавить жалобу"""
         conn = self.get_connection()
