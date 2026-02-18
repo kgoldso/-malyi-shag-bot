@@ -1,6 +1,6 @@
 import os
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
 import config
 
@@ -13,19 +13,15 @@ if USE_POSTGRES:
 else:
     import sqlite3
 
-
 class Database:
     def __init__(self):
         self.use_postgres = USE_POSTGRES
-
         if self.use_postgres:
             self.db_url = os.getenv('DATABASE_URL')
-            # Railway иногда даёт postgres://, но psycopg2 требует postgresql://
             if self.db_url.startswith('postgres://'):
                 self.db_url = self.db_url.replace('postgres://', 'postgresql://', 1)
         else:
             self.db_name = config.DATABASE_NAME
-
         self.init_db()
 
     def get_connection(self):
@@ -43,7 +39,6 @@ class Database:
         cursor = conn.cursor()
 
         if self.use_postgres:
-            # PostgreSQL синтаксис
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -61,7 +56,6 @@ class Database:
                     warnings INTEGER DEFAULT 0
                 )
             ''')
-
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS reports (
                     id SERIAL PRIMARY KEY,
@@ -75,7 +69,6 @@ class Database:
                 )
             ''')
         else:
-            # SQLite синтаксис
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
@@ -93,7 +86,6 @@ class Database:
                     warnings INTEGER DEFAULT 0
                 )
             ''')
-
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS reports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,35 +99,37 @@ class Database:
                 )
             ''')
 
-            # Таблица истории челленджей
-            if self.use_postgres:
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS history (
-                        id SERIAL PRIMARY KEY,
-                        user_id BIGINT,
-                        category TEXT,
-                        challenge TEXT,
-                        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (user_id) REFERENCES users(user_id)
-                    )
-                ''')
-            else:
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER,
-                        category TEXT,
-                        challenge TEXT,
-                        completed_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (user_id) REFERENCES users(user_id)
-                    )
-                ''')
+        # Таблица истории челленджей
+        if self.use_postgres:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS history (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    category TEXT,
+                    challenge TEXT,
+                    completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            ''')
+        else:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    category TEXT,
+                    challenge TEXT,
+                    completed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            ''')
 
-        # Добавляем колонки для текущего челленджа, если их нет
+        # Добавляем колонки если их нет
         try:
             if self.use_postgres:
                 cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS current_challenge TEXT")
                 cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS current_category TEXT")
+                cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_freeze_until TEXT")
+                cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS double_coins_until TEXT")
             else:
                 cursor.execute("PRAGMA table_info(users)")
                 columns = [col[1] for col in cursor.fetchall()]
@@ -143,8 +137,12 @@ class Database:
                     cursor.execute('ALTER TABLE users ADD COLUMN current_challenge TEXT')
                 if 'current_category' not in columns:
                     cursor.execute('ALTER TABLE users ADD COLUMN current_category TEXT')
+                if 'streak_freeze_until' not in columns:
+                    cursor.execute('ALTER TABLE users ADD COLUMN streak_freeze_until TEXT')
+                if 'double_coins_until' not in columns:
+                    cursor.execute('ALTER TABLE users ADD COLUMN double_coins_until TEXT')
         except Exception as e:
-            pass  # Колонки уже существуют
+            pass
 
         conn.commit()
         conn.close()
@@ -153,7 +151,6 @@ class Database:
         """Добавить пользователя"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             if self.use_postgres:
                 cursor.execute('''
@@ -166,7 +163,6 @@ class Database:
                     INSERT OR IGNORE INTO users (user_id, username, first_name, language_code)
                     VALUES (?, ?, ?, ?)
                 ''', (user_id, username, first_name, language_code))
-
             conn.commit()
         finally:
             conn.close()
@@ -175,12 +171,10 @@ class Database:
         """Получить данные пользователя"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'SELECT * FROM users WHERE user_id = {param}', (user_id,))
             row = cursor.fetchone()
-
             if row:
                 if self.use_postgres:
                     columns = [desc[0] for desc in cursor.description]
@@ -200,7 +194,6 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            # Считаем статистику по категориям из истории
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'''
                 SELECT category, COUNT(*) as count
@@ -208,19 +201,16 @@ class Database:
                 WHERE user_id = {param}
                 GROUP BY category
             ''', (user_id,))
-
             category_stats = {}
             for row in cursor.fetchall():
                 category_stats[row[0]] = row[1]
 
-            # Получаем историю для check_achievements
             cursor.execute(f'''
                 SELECT category, challenge, completed_at
                 FROM history
                 WHERE user_id = {param}
                 ORDER BY completed_at DESC
             ''', (user_id,))
-
             history = []
             for row in cursor.fetchall():
                 history.append({
@@ -229,7 +219,6 @@ class Database:
                     'completed_at': row[2]
                 })
 
-            # Базовая статистика из таблицы users
             stats = {
                 'user_id': user['user_id'],
                 'username': user['username'],
@@ -242,7 +231,6 @@ class Database:
                 'category_stats': category_stats,
                 'history': history
             }
-
             return stats
         finally:
             conn.close()
@@ -251,20 +239,17 @@ class Database:
         """Обновить streak"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             today = date.today().isoformat()
             param = '%s' if self.use_postgres else '?'
-
             cursor.execute(f'''
-                UPDATE users 
+                UPDATE users
                 SET streak = streak + 1,
                     longest_streak = GREATEST(longest_streak, streak + 1),
                     total_completed = total_completed + 1,
                     last_completed_date = {param}
                 WHERE user_id = {param}
             ''', (today, user_id))
-
             conn.commit()
         finally:
             conn.close()
@@ -273,15 +258,11 @@ class Database:
         """Сбросить streak"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'''
-                UPDATE users 
-                SET streak = 0
-                WHERE user_id = {param}
+                UPDATE users SET streak = 0 WHERE user_id = {param}
             ''', (user_id,))
-
             conn.commit()
         finally:
             conn.close()
@@ -290,15 +271,11 @@ class Database:
         """Добавить монеты"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'''
-                UPDATE users 
-                SET coins = coins + {param}
-                WHERE user_id = {param}
+                UPDATE users SET coins = coins + {param} WHERE user_id = {param}
             ''', (amount, user_id))
-
             conn.commit()
         finally:
             conn.close()
@@ -312,30 +289,21 @@ class Database:
         """Купить предмет"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'SELECT coins, purchased_items FROM users WHERE user_id = {param}', (user_id,))
             row = cursor.fetchone()
-
             if not row:
                 return False
-
             coins = row[0]
             purchased_items = json.loads(row[1]) if row[1] else []
-
             if coins < cost or item_id in purchased_items:
                 return False
-
             purchased_items.append(item_id)
             new_coins = coins - cost
-
             cursor.execute(f'''
-                UPDATE users 
-                SET coins = {param}, purchased_items = {param}
-                WHERE user_id = {param}
+                UPDATE users SET coins = {param}, purchased_items = {param} WHERE user_id = {param}
             ''', (new_coins, json.dumps(purchased_items), user_id))
-
             conn.commit()
             return True
         finally:
@@ -356,19 +324,13 @@ class Database:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'SELECT achievements FROM users WHERE user_id = {param}', (user_id,))
             row = cursor.fetchone()
-
             if row:
                 achievements = json.loads(row[0]) if row[0] else []
-
-                # Проверяем, нет ли уже такого достижения
                 if achievement_id in achievements:
                     return False
-
                 achievements.append(achievement_id)
                 cursor.execute(f'''
-                    UPDATE users
-                    SET achievements = {param}
-                    WHERE user_id = {param}
+                    UPDATE users SET achievements = {param} WHERE user_id = {param}
                 ''', (json.dumps(achievements), user_id))
                 conn.commit()
                 return True
@@ -387,19 +349,15 @@ class Database:
         """Добавить жалобу"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             if self.use_postgres:
                 cursor.execute('''
-                    INSERT INTO reports (user_id, username, message)
-                    VALUES (%s, %s, %s)
+                    INSERT INTO reports (user_id, username, message) VALUES (%s, %s, %s)
                 ''', (user_id, username, message))
             else:
                 cursor.execute('''
-                    INSERT INTO reports (user_id, username, message)
-                    VALUES (?, ?, ?)
+                    INSERT INTO reports (user_id, username, message) VALUES (?, ?, ?)
                 ''', (user_id, username, message))
-
             conn.commit()
         finally:
             conn.close()
@@ -410,7 +368,6 @@ class Database:
         try:
             cursor.execute("SELECT * FROM reports WHERE status = 'pending' ORDER BY created_at DESC")
             rows = cursor.fetchall()
-
             if self.use_postgres:
                 columns = [desc[0] for desc in cursor.description]
                 return [dict(zip(columns, row)) for row in rows]
@@ -423,15 +380,11 @@ class Database:
         """Обновить статус жалобы"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'''
-                UPDATE reports 
-                SET status = {param}, admin_response = {param}
-                WHERE id = {param}
+                UPDATE reports SET status = {param}, admin_response = {param} WHERE id = {param}
             ''', (status, admin_response, report_id))
-
             conn.commit()
         finally:
             conn.close()
@@ -440,15 +393,11 @@ class Database:
         """Добавить предупреждение"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'''
-                UPDATE users 
-                SET warnings = warnings + 1
-                WHERE user_id = {param}
+                UPDATE users SET warnings = warnings + 1 WHERE user_id = {param}
             ''', (user_id,))
-
             conn.commit()
         finally:
             conn.close()
@@ -457,7 +406,6 @@ class Database:
         """Удалить данные пользователя"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'DELETE FROM reports WHERE user_id = {param}', (user_id,))
@@ -470,7 +418,6 @@ class Database:
         """Получить всех пользователей"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             cursor.execute('SELECT user_id FROM users')
             return [row[0] for row in cursor.fetchall()]
@@ -481,17 +428,13 @@ class Database:
         """Получить время последней жалобы"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'''
-                SELECT created_at 
-                FROM reports 
+                SELECT created_at FROM reports
                 WHERE user_id = {param}
-                ORDER BY created_at DESC 
-                LIMIT 1
+                ORDER BY created_at DESC LIMIT 1
             ''', (user_id,))
-
             result = cursor.fetchone()
             return result[0] if result else None
         finally:
@@ -502,15 +445,12 @@ class Database:
         today = date.today().isoformat()
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'''
-                SELECT COUNT(*) 
-                FROM reports 
+                SELECT COUNT(*) FROM reports
                 WHERE user_id = {param} AND DATE(created_at) = {param}
             ''', (user_id, today))
-
             return cursor.fetchone()[0]
         finally:
             conn.close()
@@ -519,12 +459,10 @@ class Database:
         """Проверка на бан"""
         conn = self.get_connection()
         cursor = conn.cursor()
-
         try:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'SELECT warnings FROM users WHERE user_id = {param}', (user_id,))
             result = cursor.fetchone()
-
             return result and result[0] >= 3
         finally:
             conn.close()
@@ -554,36 +492,42 @@ class Database:
 
         # Проверка, не завершал ли уже сегодня
         if user.get('last_completed_date') == today:
-            return {
-                'success': False,
-                'message': 'Ты уже выполнил челлендж сегодня!'
-            }
+            return {'success': False, 'message': 'Ты уже выполнил челлендж сегодня!'}
 
         # Вычисляем новый стрик
         last_date = user.get('last_completed_date')
         current_streak = user.get('streak', 0)
 
         if last_date is None:
-            new_streak = 1  # первый раз
+            new_streak = 1
         else:
-            from datetime import timedelta
             last_date_obj = date.fromisoformat(last_date)
             diff = (date.today() - last_date_obj).days
             if diff == 1:
-                new_streak = current_streak + 1  # вчера выполнял — продолжаем
+                new_streak = current_streak + 1
             else:
-                new_streak = 1  # пропустил день(и) — сброс
+                # Проверяем заморозку стрика
+                freeze_until = user.get('streak_freeze_until')
+                if freeze_until and date.fromisoformat(freeze_until) >= date.today():
+                    new_streak = current_streak  # заморозка активна — стрик сохраняем
+                else:
+                    new_streak = 1  # пропустил день — сброс
+
+        # Проверяем активен ли x2 бонус
+        double_until = user.get('double_coins_until')
+        if double_until and date.fromisoformat(double_until) >= date.today():
+            coins_earned = 10
+        else:
+            coins_earned = 5
 
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             param = '%s' if self.use_postgres else '?'
 
-            # Получаем текущий челлендж и категорию
             current_challenge = user.get('current_challenge', '')
             current_category = user.get('current_category', 'unknown')
 
-            # Обновляем streak и статистику
             cursor.execute(f'''
                 UPDATE users
                 SET streak = {param},
@@ -592,10 +536,10 @@ class Database:
                         ELSE longest_streak
                     END,
                     total_completed = total_completed + 1,
-                    coins = coins + 5,
+                    coins = coins + {param},
                     last_completed_date = {param}
                 WHERE user_id = {param}
-            ''', (new_streak, new_streak, new_streak, today, user_id))
+            ''', (new_streak, new_streak, new_streak, coins_earned, today, user_id))
 
             # Добавляем в историю
             if self.use_postgres:
@@ -611,7 +555,7 @@ class Database:
 
             conn.commit()
 
-            # Получаем обновленные данные
+            # Получаем обновлённые данные
             cursor.execute(f'SELECT * FROM users WHERE user_id = {param}', (user_id,))
             row = cursor.fetchone()
             if self.use_postgres:
@@ -624,7 +568,7 @@ class Database:
                 'success': True,
                 'streak': updated_user['streak'],
                 'total': updated_user['total_completed'],
-                'coins_earned': 5,
+                'coins_earned': coins_earned,
                 'total_coins': updated_user['coins']
             }
 
@@ -634,6 +578,68 @@ class Database:
         finally:
             conn.close()
 
+    def buy_streak_freeze(self, user_id: int, days: int, cost: int) -> Dict[str, Any]:
+        """Купить заморозку стрика"""
+        user = self.get_user(user_id)
+        if not user:
+            return {'success': False, 'message': 'Пользователь не найден'}
+        if user['coins'] < cost:
+            return {'success': False, 'message': f'Недостаточно монет! Нужно {cost} 🪙'}
 
+        today = date.today()
+        current_freeze = user.get('streak_freeze_until')
+        if current_freeze and date.fromisoformat(current_freeze) >= today:
+            base = date.fromisoformat(current_freeze)  # продлеваем существующую
+        else:
+            base = today
+        new_freeze_until = (base + timedelta(days=days)).isoformat()
 
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'''
+                UPDATE users
+                SET coins = coins - {param}, streak_freeze_until = {param}
+                WHERE user_id = {param}
+            ''', (cost, new_freeze_until, user_id))
+            conn.commit()
+            return {'success': True, 'freeze_until': new_freeze_until}
+        except Exception as e:
+            conn.rollback()
+            return {'success': False, 'message': str(e)}
+        finally:
+            conn.close()
 
+    def buy_double_coins(self, user_id: int, cost: int) -> Dict[str, Any]:
+        """Купить x2 монеты на 7 дней"""
+        user = self.get_user(user_id)
+        if not user:
+            return {'success': False, 'message': 'Пользователь не найден'}
+        if user['coins'] < cost:
+            return {'success': False, 'message': f'Недостаточно монет! Нужно {cost} 🪙'}
+
+        today = date.today()
+        current_double = user.get('double_coins_until')
+        if current_double and date.fromisoformat(current_double) >= today:
+            base = date.fromisoformat(current_double)  # продлеваем существующий
+        else:
+            base = today
+        new_double_until = (base + timedelta(days=7)).isoformat()
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            param = '%s' if self.use_postgres else '?'
+            cursor.execute(f'''
+                UPDATE users
+                SET coins = coins - {param}, double_coins_until = {param}
+                WHERE user_id = {param}
+            ''', (cost, new_double_until, user_id))
+            conn.commit()
+            return {'success': True, 'double_until': new_double_until}
+        except Exception as e:
+            conn.rollback()
+            return {'success': False, 'message': str(e)}
+        finally:
+            conn.close()

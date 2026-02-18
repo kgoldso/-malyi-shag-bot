@@ -173,8 +173,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("🎯 Получить челлендж", callback_data='back_to_categories')],
-        [InlineKeyboardButton("📊 Моя статистика", callback_data='stats')],
-        [InlineKeyboardButton("🏆 Достижения", callback_data='achievements')],
+        [InlineKeyboardButton("📊 Моя статистика", callback_data='stats'),
+         InlineKeyboardButton("🏆 Достижения", callback_data='achievements')],
+        [InlineKeyboardButton("🛒 Магазин", callback_data='shop')],
     ]
 
     await update.message.reply_text(
@@ -182,6 +183,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
+
 
 @ensure_user
 async def challenge_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1377,6 +1379,129 @@ async def cancel_report_handler(update: Update, context: ContextTypes.DEFAULT_TY
     await query.edit_message_text("❌ Отменено.")
 
 
+# ============= МАГАЗИН =============
+
+async def shop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Магазин"""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        user_id = query.from_user.id
+    else:
+        user_id = update.effective_user.id
+
+    user = db.get_user(user_id)
+    coins = user['coins'] if user else 0
+
+    today = date.today()
+    freeze_until = user.get('streak_freeze_until') if user else None
+    double_until = user.get('double_coins_until') if user else None
+
+    freeze_status = ""
+    if freeze_until and date.fromisoformat(freeze_until) >= today:
+        freeze_status = f" ✅ _(до {freeze_until})_"
+
+    double_status = ""
+    if double_until and date.fromisoformat(double_until) >= today:
+        double_status = f" ✅ _(до {double_until})_"
+
+    text = (
+        f"🛒 *Магазин*\n\n"
+        f"💰 Твой баланс: *{coins} монет*\n\n"
+        f"*Доступные товары:*\n\n"
+        f"🛡️ *Заморозка стрика на 1 день* — 50 🪙{freeze_status}\n"
+        f"_Один пропуск не сбросит твой стрик_\n\n"
+        f"❄️ *Заморозка стрика на 3 дня* — 120 🪙{freeze_status}\n"
+        f"_Три дня пропусков без потери стрика_\n\n"
+        f"⚡ *x2 монеты на 7 дней* — 50 🪙{double_status}\n"
+        f"_Получай 10 монет вместо 5 за каждый челлендж_"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🛡️ Заморозка 1 день — 50 🪙", callback_data='buy_freeze_1')],
+        [InlineKeyboardButton("❄️ Заморозка 3 дня — 120 🪙", callback_data='buy_freeze_3')],
+        [InlineKeyboardButton("⚡ x2 монеты 7 дней — 50 🪙", callback_data='buy_double')],
+        [InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')],
+    ]
+
+    if query:
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    else:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+
+async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /shop"""
+    await shop_handler(update, context)
+
+
+async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик покупок в магазине"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    action = query.data
+
+    if action == 'buy_freeze_1':
+        result = db.buy_streak_freeze(user_id, days=1, cost=50)
+        if result['success']:
+            text = (
+                "✅ *Заморозка куплена!*\n\n"
+                f"Стрик защищён до: `{result['freeze_until']}`\n\n"
+                "Один пропуск не засчитается! 🛡️"
+            )
+        else:
+            text = f"❌ {result['message']}"
+
+    elif action == 'buy_freeze_3':
+        result = db.buy_streak_freeze(user_id, days=3, cost=120)
+        if result['success']:
+            text = (
+                "✅ *Заморозка куплена!*\n\n"
+                f"Стрик защищён до: `{result['freeze_until']}`\n\n"
+                "Три пропуска не засчитаются! ❄️"
+            )
+        else:
+            text = f"❌ {result['message']}"
+
+    elif action == 'buy_double':
+        result = db.buy_double_coins(user_id, cost=50)
+        if result['success']:
+            text = (
+                "✅ *x2 монеты активированы!*\n\n"
+                f"Активно до: `{result['double_until']}`\n\n"
+                "Теперь получаешь 10 монет за каждый челлендж! ⚡"
+            )
+        else:
+            text = f"❌ {result['message']}"
+
+    else:
+        text = "❌ Неизвестный товар"
+
+    keyboard = [[InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+
+async def back_to_main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в главное меню из магазина"""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+
+    keyboard = [
+        [InlineKeyboardButton("🎯 Получить челлендж", callback_data='back_to_categories')],
+        [InlineKeyboardButton("📊 Моя статистика", callback_data='stats'),
+         InlineKeyboardButton("🏆 Достижения", callback_data='achievements')],
+        [InlineKeyboardButton("🛒 Магазин", callback_data='shop')],
+    ]
+
+    await query.edit_message_text(
+        f"👋 Привет, *{user.first_name}*!\n\nВыбери действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+
 async def admin_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в админ-панель"""
     query = update.callback_query
@@ -1404,7 +1529,6 @@ async def admin_back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def main():
     """Запуск бота"""
 
-    # ============= СОЗДАНИЕ ПРИЛОЖЕНИЯ =============
     application = Application.builder().token(config.BOT_TOKEN).build()
 
     # Установка команд меню
@@ -1414,6 +1538,7 @@ def main():
             BotCommand("start", "🌱 Начать работу"),
             BotCommand("stats", "📊 Моя статистика"),
             BotCommand("achievements", "🏆 Достижения"),
+            BotCommand("shop", "🛒 Магазин"),
             BotCommand("report", "📝 Сообщить об ошибке"),
         ]
         await app.bot.set_my_commands(commands)
@@ -1421,15 +1546,14 @@ def main():
 
     application.post_init = post_init
 
-    application = Application.builder().token(config.BOT_TOKEN).build()
-
     # Команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("achievements", achievements_command))
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("report", report_command))
-    application.add_handler(CommandHandler('challenge', challenge_command))
+    application.add_handler(CommandHandler("challenge", challenge_command))
+    application.add_handler(CommandHandler("shop", shop_command))
 
     # Обычные callback
     application.add_handler(CallbackQueryHandler(category_handler, pattern='^cat_'))
@@ -1438,6 +1562,9 @@ def main():
     application.add_handler(CallbackQueryHandler(stats_handler, pattern='^stats$'))
     application.add_handler(CallbackQueryHandler(achievements_handler, pattern='^achievements$'))
     application.add_handler(CallbackQueryHandler(back_to_categories_handler, pattern='^back_to_categories$'))
+    application.add_handler(CallbackQueryHandler(shop_handler, pattern='^shop$'))
+    application.add_handler(CallbackQueryHandler(buy_handler, pattern='^buy_'))
+    application.add_handler(CallbackQueryHandler(back_to_main_handler, pattern='^back_to_main$'))
 
     # Админ callback
     application.add_handler(CallbackQueryHandler(admin_stats_handler, pattern='^admin_stats$'))
@@ -1446,7 +1573,8 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_broadcast_all_handler, pattern='^admin_broadcast_all$'))
     application.add_handler(CallbackQueryHandler(admin_broadcast_one_handler, pattern='^admin_broadcast_one$'))
     application.add_handler(
-        CallbackQueryHandler(admin_broadcast_multiple_handler, pattern='^admin_broadcast_multiple$'))
+        CallbackQueryHandler(admin_broadcast_multiple_handler, pattern='^admin_broadcast_multiple$')
+    )
     application.add_handler(CallbackQueryHandler(admin_delete_menu_handler, pattern='^admin_delete_menu$'))
     application.add_handler(CallbackQueryHandler(admin_give_coins_handler, pattern='^admin_give_coins$'))
     application.add_handler(CallbackQueryHandler(admin_reports_handler, pattern='^admin_reports$'))
@@ -1454,7 +1582,7 @@ def main():
     application.add_handler(CallbackQueryHandler(cancel_report_handler, pattern='^cancel_report$'))
 
     # Паттерны с параметрами
-    application.add_handler(CallbackQueryHandler(admin_report_detail_handler, pattern='^admin_report_\d+$'))
+    application.add_handler(CallbackQueryHandler(admin_report_detail_handler, pattern='^admin_report_\\d+$'))
     application.add_handler(CallbackQueryHandler(admin_reply_report_handler, pattern='^admin_reply_'))
     application.add_handler(CallbackQueryHandler(admin_approve_report_handler, pattern='^admin_approve_'))
     application.add_handler(CallbackQueryHandler(admin_reject_report_handler, pattern='^admin_reject_'))
