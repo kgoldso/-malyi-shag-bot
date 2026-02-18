@@ -251,19 +251,14 @@ def get_challenge_keyboard(can_complete: bool = True):
 
 
 async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора категории"""
     query = update.callback_query
     await query.answer()
 
     user_id = query.from_user.id
     category = query.data.replace('cat_', '')
 
-    # Проверка, выполнил ли уже сегодня
     user = db.get_user(user_id)
-
-    # ИСПРАВЛЕНИЕ: Проверяем что пользователь существует
     if not user:
-        # Если пользователя нет, регистрируем
         username = query.from_user.username or query.from_user.first_name
         db.add_user(
             user_id=user_id,
@@ -276,25 +271,22 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = date.today().isoformat()
     can_complete = user['last_completed_date'] != today
 
-    if not can_complete:
-        # Если уже выполнил сегодня, показываем сообщение без челленджа
-        emoji = config.CATEGORIES[category]['emoji']
-        cat_name = config.CATEGORIES[category]['name']
+    emoji = config.CATEGORIES[category]['emoji']
+    cat_name = config.CATEGORIES[category]['name']
 
+    if not can_complete:
         message_text = f"""{emoji} *Категория: {cat_name}*
 
 ✅ *Отличная работа!*
 
-Ты уже выполнил челлендж сегодня! 
+Ты уже выполнил челлендж сегодня!
 
 🌟 Возвращайся завтра за новым заданием.
 💪 Продолжай развивать свою дисциплину!"""
 
         keyboard = [
-            [InlineKeyboardButton("📊 Моя статистика", callback_data='stats')],
-            [InlineKeyboardButton("◀️ Назад к категориям", callback_data='back_to_categories')]
+            [InlineKeyboardButton("◀️ Назад к категориям", callback_data='back_to_categories')],
         ]
-
         await query.edit_message_text(
             message_text,
             reply_markup=InlineKeyboardMarkup(keyboard),
@@ -302,15 +294,9 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Выбор случайного челленджа
     challenges = config.CATEGORIES[category]['challenges']
     challenge = random.choice(challenges)
-
-    # Сохранение челленджа
     db.update_challenge(user_id, challenge, category)
-
-    emoji = config.CATEGORIES[category]['emoji']
-    cat_name = config.CATEGORIES[category]['name']
 
     message_text = f"""{emoji} *Категория: {cat_name}*
 
@@ -319,11 +305,9 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ✨ Выполни задание и нажми кнопку!"""
 
-    keyboard = get_challenge_keyboard(can_complete)
-
     await query.edit_message_text(
         message_text,
-        reply_markup=keyboard,
+        reply_markup=get_challenge_keyboard(can_complete),
         parse_mode='Markdown'
     )
 
@@ -380,49 +364,39 @@ async def another_challenge_handler(update: Update, context: ContextTypes.DEFAUL
 
 
 async def complete_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик кнопки 'Выполнил'"""
     query = update.callback_query
     await query.answer()
-
     user_id = query.from_user.id
 
     try:
         result = db.complete_challenge(user_id)
     except Exception as e:
         logger.error(f"Ошибка при выполнении челленджа: {e}")
-        keyboard = [[InlineKeyboardButton("◀️ Назад к категориям", callback_data='back_to_categories')]]
-        await query.edit_message_text(
-            "❌ Произошла ошибка. Попробуйте еще раз.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')]]
+        await query.edit_message_text("❌ Произошла ошибка. Попробуйте еще раз.",
+                                      reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if not result.get('success', False):
-        keyboard = [[InlineKeyboardButton("◀️ Назад к категориям", callback_data='back_to_categories')]]
-        await query.edit_message_text(
-            result.get('message', 'Ошибка'),
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')]]
+        await query.edit_message_text(result.get('message', 'Ошибка'),
+                                      reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Безопасное получение значений с преобразованием типов
     streak = int(result.get('streak', 1))
     total = int(result.get('total', 1))
     coins_earned = int(result.get('coins_earned', 5))
     total_coins = int(result.get('total_coins', 5))
 
-    # Проверка достижений
     try:
-        user_data = db.get_stats(user_id)  # ← Используем get_stats!
+        user_data = db.get_stats(user_id)
         new_achievements = check_achievements(user_id, user_data)
     except Exception as e:
         logger.error(f"Ошибка при проверке достижений: {e}")
         new_achievements = []
 
-    # Проверка milestone
     milestone_messages = check_milestones(streak, total)
 
-    # Сообщения в зависимости от streak
     if streak == 1:
         streak_msg = "🌱 Отличное начало! Первый шаг сделан!"
     elif streak < 7:
@@ -432,36 +406,29 @@ async def complete_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         streak_msg = f"🔥🔥🔥 Невероятно! Streak: {streak} дней! Ты чемпион!"
 
-    # Определение уровня
     level = get_user_level(total)
 
-    # Формируем сообщение БЕЗ звездочек около чисел
     message_text = (
         "✅ *Поздравляю! Челлендж выполнен!*\n\n"
         f"{streak_msg}\n"
         f"📈 Всего выполнено: {total} челленджей\n"
         f"⭐ Уровень: {level}\n"
         f"💰 Получено: +{coins_earned} монет (всего: {total_coins})\n\n"
-        "💪 Увидимся завтра! Возвращайся за новым заданием."
+        "💪 Увидимся завтра!"
     )
 
-    # Добавление новых достижений
     if new_achievements:
         message_text += "\n\n🎉 *НОВЫЕ ДОСТИЖЕНИЯ:*\n"
         for ach in new_achievements:
-            ach_name = str(ach.get('name', 'Достижение'))
-            ach_emoji = str(ach.get('emoji', '🏆'))
-            ach_reward = int(ach.get('reward', 0))
-            message_text += f"\n{ach_emoji} {ach_name}"
-            message_text += f"\n💰 +{ach_reward} монет!"
+            message_text += f"\n{ach.get('emoji','🏆')} {ach.get('name','')}"
+            message_text += f"\n💰 +{ach.get('reward', 0)} монет!"
 
-    # Добавление milestone сообщений
     if milestone_messages:
         message_text += "\n\n" + "\n\n".join(milestone_messages)
 
     keyboard = [
-        [InlineKeyboardButton("👤 Профиль", callback_data='profile')],
         [InlineKeyboardButton("🔄 Ещё челлендж", callback_data='back_to_categories')],
+        [InlineKeyboardButton("👤 Профиль", callback_data='profile')],
     ]
 
     try:
@@ -475,7 +442,6 @@ async def complete_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик статистики"""
     query = update.callback_query
     if query:
         await query.answer()
@@ -486,13 +452,13 @@ async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = db.get_stats(user_id)
 
     if not stats:
-        text = "У тебя пока нет статистики. Начни выполнять челленджи!"
-        keyboard = [[InlineKeyboardButton("◀️ Назад к категориям", callback_data='back_to_categories')],
-                    [InlineKeyboardButton("🛒 Магазин", callback_data='shop')]]
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')]]
         if query:
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text("Нет данных. Начни выполнять челленджи!",
+                                          reply_markup=InlineKeyboardMarkup(keyboard))
         else:
-            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.message.reply_text("Нет данных. Начни выполнять челленджи!",
+                                            reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     level = get_user_level(stats['total_completed'])
@@ -525,31 +491,20 @@ async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 💰 Монет: *{coins}*
 🏆 Достижений: *{achievements_count}/{len(config.ACHIEVEMENTS)}*
 
-*Выполнено по категориям:*
-
+*По категориям:*
 {category_text}
-{("Последний челлендж: *" + last_date_formatted + "*" ) if last_date_formatted else ""}
-
-Продолжай в том же духе! 💪"""
+{"Последний: *" + last_date_formatted + "*" if last_date_formatted else ""}"""
 
     keyboard = [
-        [InlineKeyboardButton("🏆 Мои достижения", callback_data='achievements')],
-        [InlineKeyboardButton("🔄 Новый челлендж", callback_data='back_to_categories')],
-        [InlineKeyboardButton("🛒 Магазин", callback_data='shop')],
+        [InlineKeyboardButton("◀️ Назад в профиль", callback_data='profile')],
     ]
 
     if query:
-        await query.edit_message_text(
-            message_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+        await query.edit_message_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard),
+                                      parse_mode='Markdown')
     else:
-        await update.message.reply_text(
-            message_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text(message_text, reply_markup=InlineKeyboardMarkup(keyboard),
+                                        parse_mode='Markdown')
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -558,7 +513,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def achievements_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик просмотра достижений"""
     query = update.callback_query
     if query:
         await query.answer()
@@ -574,7 +528,7 @@ async def achievements_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     user_achievements = json.loads(user['achievements']) if user['achievements'] else []
     coins = user['coins']
 
-    lines = [f"🏆 *Твои достижения* ({len(user_achievements)}/{len(config.ACHIEVEMENTS)})\n"]
+    lines = [f"🏆 *Достижения* ({len(user_achievements)}/{len(config.ACHIEVEMENTS)})\n"]
 
     for ach_id, ach in config.ACHIEVEMENTS.items():
         if ach_id in user_achievements:
@@ -586,23 +540,15 @@ async def achievements_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     text = "\n\n".join(lines)
 
     keyboard = [
-        [InlineKeyboardButton("📊 Моя статистика", callback_data='stats')],
-        [InlineKeyboardButton("🔄 Новый челлендж", callback_data='back_to_categories')],
-        [InlineKeyboardButton("🛒 Магазин", callback_data='shop')],
+        [InlineKeyboardButton("◀️ Назад в профиль", callback_data='profile')],
     ]
 
     if query:
-        await query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard),
+                                      parse_mode='Markdown')
     else:
-        await update.message.reply_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard),
+                                        parse_mode='Markdown')
 
 
 async def achievements_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
