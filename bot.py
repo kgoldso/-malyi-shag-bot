@@ -550,20 +550,16 @@ async def achievements_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     user_achievements = json.loads(user['achievements']) if user['achievements'] else []
     coins = user['coins']
 
-    if not user_achievements:
-        text = (
-            "🏆 *Твои достижения*\n\n"
-            "Пока что у тебя нет достижений.\n\n"
-            "Выполняй челленджи каждый день, чтобы открыть первые награды!"
-        )
-    else:
-        lines = ["🏆 *Твои достижения:*\n"]
-        for ach_id in user_achievements:
-            if ach_id in config.ACHIEVEMENTS:
-                ach = config.ACHIEVEMENTS[ach_id]
-                lines.append(f"{ach['emoji']} *{ach['name']}* — {ach['description']}")
-        lines.append(f"\n💰 Монет: *{coins}*")
-        text = "\n".join(lines)
+    lines = [f"🏆 *Твои достижения* ({len(user_achievements)}/{len(config.ACHIEVEMENTS)})\n"]
+
+    for ach_id, ach in config.ACHIEVEMENTS.items():
+        if ach_id in user_achievements:
+            lines.append(f"{ach['emoji']} *{ach['name']}* ✅\n_{ach['description']}_")
+        else:
+            lines.append(f"🔒 *{ach['name']}*\n_{ach['description']}_")
+
+    lines.append(f"\n💰 Монет: *{coins}*")
+    text = "\n\n".join(lines)
 
     keyboard = [
         [InlineKeyboardButton("📊 Моя статистика", callback_data='stats')],
