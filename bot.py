@@ -448,6 +448,7 @@ async def complete_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка при отправке сообщения: {e}")
 
+
 async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик статистики"""
     query = update.callback_query
@@ -461,17 +462,16 @@ async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not stats:
         text = "У тебя пока нет статистики. Начни выполнять челленджи!"
-        keyboard = [[InlineKeyboardButton("◀️ Назад к категориям", callback_data='back_to_categories')]]
+        keyboard = [[InlineKeyboardButton("◀️ Назад к категориям", callback_data='back_to_categories')],
+                    [InlineKeyboardButton("🛒 Магазин", callback_data='shop')]]
         if query:
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Определение уровня
     level = get_user_level(stats['total_completed'])
 
-    # Форматирование даты последнего выполнения
     last_date_formatted = ""
     if stats['last_completed_date']:
         try:
@@ -480,14 +480,12 @@ async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             last_date_formatted = stats['last_completed_date']
 
-    # Формирование статистики по категориям
     category_text = ""
     for cat_key, count in stats['category_stats'].items():
         if cat_key in config.CATEGORIES:
             emoji = config.CATEGORIES[cat_key]['emoji']
             name = config.CATEGORIES[cat_key]['name']
             category_text += f"{emoji} {name}: *{count}*\n"
-
     if not category_text:
         category_text = "_Пока нет данных_"
 
@@ -503,14 +501,16 @@ async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🏆 Достижений: *{achievements_count}/{len(config.ACHIEVEMENTS)}*
 
 *Выполнено по категориям:*
+
 {category_text}
-{"Последний челлендж: *" + last_date_formatted + "*" if last_date_formatted else ""}
+{("Последний челлендж: *" + last_date_formatted + "*" ) if last_date_formatted else ""}
 
 Продолжай в том же духе! 💪"""
 
     keyboard = [
         [InlineKeyboardButton("🏆 Мои достижения", callback_data='achievements')],
         [InlineKeyboardButton("🔄 Новый челлендж", callback_data='back_to_categories')],
+        [InlineKeyboardButton("🛒 Магазин", callback_data='shop')],
     ]
 
     if query:
@@ -545,52 +545,40 @@ async def achievements_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not user:
         return
 
-    # ИСПРАВЛЕНИЕ: Парсим JSON в список
     import json
     user_achievements = json.loads(user['achievements']) if user['achievements'] else []
     coins = user['coins']
 
-    # Формирование списка достижений
-    earned_text = ""
-    locked_text = ""
-
-    for ach_id, ach in config.ACHIEVEMENTS.items():
-        if ach_id in user_achievements:
-            earned_text += f"{ach['emoji']} *{ach['name']}*\n"
-            earned_text += f"   _{ach['description']}_\n"
-            earned_text += f"   💰 +{ach['reward']} монет\n\n"
-        else:
-            locked_text += f"🔒 {ach['name']}\n"
-            locked_text += f"   _{ach['description']}_\n"
-            locked_text += f"   💰 {ach['reward']} монет\n\n"
-
-    if not earned_text:
-        earned_text = "_Пока нет достижений. Выполняй челленджи!_\n\n"
-
-    message_text = f"""🏆 *Твои достижения*
-
-💰 *Всего монет:* {coins}
-🎖️ *Получено:* {len(user_achievements)}/{len(config.ACHIEVEMENTS)}
-
-*✅ Открытые:*
-{earned_text}
-*🔒 Заблокированные:*
-{locked_text[:800]}{"..." if len(locked_text) > 800 else ""}"""
+    if not user_achievements:
+        text = (
+            "🏆 *Твои достижения*\n\n"
+            "Пока что у тебя нет достижений.\n\n"
+            "Выполняй челленджи каждый день, чтобы открыть первые награды!"
+        )
+    else:
+        lines = ["🏆 *Твои достижения:*\n"]
+        for ach_id in user_achievements:
+            if ach_id in config.ACHIEVEMENTS:
+                ach = config.ACHIEVEMENTS[ach_id]
+                lines.append(f"{ach['emoji']} *{ach['name']}* — {ach['description']}")
+        lines.append(f"\n💰 Монет: *{coins}*")
+        text = "\n".join(lines)
 
     keyboard = [
+        [InlineKeyboardButton("📊 Моя статистика", callback_data='stats')],
         [InlineKeyboardButton("🔄 Новый челлендж", callback_data='back_to_categories')],
-        [InlineKeyboardButton("📊 Статистика", callback_data='stats')]
+        [InlineKeyboardButton("🛒 Магазин", callback_data='shop')],
     ]
 
     if query:
         await query.edit_message_text(
-            message_text,
+            text,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
     else:
         await update.message.reply_text(
-            message_text,
+            text,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
