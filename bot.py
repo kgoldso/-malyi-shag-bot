@@ -146,6 +146,7 @@ async def delete_old_bot_message(context: ContextTypes.DEFAULT_TYPE, chat_id: in
 
 @ensure_user
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"⚡ START вызван! update_id={update.update_id}, user={update.effective_user.id}")
     user = update.effective_user
     welcome_text = f"""👋 Привет, *{user.first_name}*!
 
