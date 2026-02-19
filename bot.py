@@ -66,8 +66,6 @@ async def check_and_reset_streaks(bot):
     yesterday = (date.today() - timedelta(days=1)).isoformat()
 
     for user_id in users:
-        if user_id != config.ADMIN_ID:
-            continue
         user = db.get_user(user_id)
         last = user.get('last_completed_date')
 
@@ -91,8 +89,6 @@ async def send_evening_reminder(bot):
     today = date.today().isoformat()
 
     for user_id in users:
-        if user_id != config.ADMIN_ID:  # временно — только себе
-            continue
         user = db.get_user(user_id)
         if user.get('last_completed_date') != today:
             try:
@@ -1543,17 +1539,20 @@ def main():
     application = Application.builder().token(config.BOT_TOKEN).build()
     # При старте бота:
     minsk_tz = pytz.timezone("Europe/Minsk")
+
     scheduler = AsyncIOScheduler(timezone=minsk_tz)
     scheduler.add_job(
         check_and_reset_streaks,
-        'date',
-        run_date=datetime.now(minsk_tz) + timedelta(minutes=1),
+        'cron',
+        hour=0,
+        minute=0,
         args=[application.bot]
     )
     scheduler.add_job(
         send_evening_reminder,
-        'date',
-        run_date=datetime.now(minsk_tz) + timedelta(minutes=1),
+        'cron',
+        hour=20,
+        minute=0,
         args=[application.bot]
     )
     scheduler.start()
