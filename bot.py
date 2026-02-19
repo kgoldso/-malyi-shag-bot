@@ -247,8 +247,8 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-
     stats = db.get_stats(user_id)
+
     if not stats:
         keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')]]
         await query.edit_message_text(
@@ -263,6 +263,25 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     level = get_user_level(stats['total_completed'])
     progress_bar = get_progress_bar(stats['total_completed'])
     coins = stats.get('coins', 0)
+    today = date.today().isoformat()
+
+    streak = stats['streak']
+    longest_streak = user.get('longest_streak', 0)
+
+    # Статус стрика
+    if user.get('last_completed_date') == today:
+        streak_status = f"🔥 Streak: *{streak} дней* ✅"
+    else:
+        freeze_until = user.get('streak_freeze_until')
+        if freeze_until and date.fromisoformat(freeze_until) >= date.today():
+            streak_status = f"🔥 Streak: *{streak} дней* 🛡️"
+        else:
+            streak_status = f"🔥 Streak: *{streak} дней* ⚠️"
+
+    # Рекорд только если текущий стрик меньше максимального
+    record_line = ""
+    if longest_streak > streak:
+        record_line = f"🏅 Рекорд: *{longest_streak} дней*\n"
 
     # Статистика по категориям
     category_text = ""
@@ -274,7 +293,8 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         f"👤 *Профиль*\n\n"
-        f"🔥 Streak: *{stats['streak']} дней*\n"
+        f"{streak_status}\n"
+        f"{record_line}"
         f"✅ Выполнено: *{stats['total_completed']}* челленджей\n"
         f"⭐ Уровень: *{level}*\n"
         f"`{progress_bar}`\n"
