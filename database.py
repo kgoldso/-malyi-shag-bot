@@ -13,6 +13,7 @@ if USE_POSTGRES:
 else:
     import sqlite3
 
+
 class Database:
     def __init__(self):
         self.use_postgres = USE_POSTGRES
@@ -130,6 +131,7 @@ class Database:
                 cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS current_category TEXT")
                 cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_freeze_until TEXT")
                 cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS double_coins_until TEXT")
+                cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS challenge_date TEXT")
             else:
                 cursor.execute("PRAGMA table_info(users)")
                 columns = [col[1] for col in cursor.fetchall()]
@@ -501,9 +503,9 @@ class Database:
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'''
                 UPDATE users
-                SET current_challenge = {param}, current_category = {param}
+                SET current_challenge = {param}, current_category = {param}, challenge_date = {param}
                 WHERE user_id = {param}
-            ''', (challenge, category, user_id))
+            ''', (challenge, category, date.today().isoformat(), user_id))
             conn.commit()
         finally:
             conn.close()

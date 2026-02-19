@@ -1,7 +1,8 @@
 import logging
 import random
-from datetime import datetime, date
+from datetime import datetime, timedelta, date
 import asyncio
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -57,9 +58,6 @@ logger = logging.getLogger(__name__)
 # Инициализация базы данных
 db = Database()
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from datetime import date, timedelta
-
 
 async def check_and_reset_streaks():
     users = db.get_all_users()
@@ -76,12 +74,6 @@ async def check_and_reset_streaks():
             if freeze_until and date.fromisoformat(freeze_until) >= date.today():
                 continue  # заморозка активна — не сбрасываем
             db.reset_streak(user_id)
-
-
-# При старте бота:
-scheduler = AsyncIOScheduler(timezone="Europe/Minsk")
-scheduler.add_job(check_and_reset_streaks, 'cron', hour=0, minute=0)
-scheduler.start()
 
 
 def get_user_level(total_completed: int) -> str:
@@ -269,7 +261,6 @@ def get_challenge_keyboard(can_complete: bool = True):
 async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     user_id = query.from_user.id
     category = query.data.replace('cat_', '')
 
@@ -287,6 +278,11 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = date.today().isoformat()
     can_complete = user['last_completed_date'] != today
 
+    # Если челлендж выдан не сегодня — сбрасываем
+    if user.get('challenge_date') != today:
+        db.update_challenge(user_id, None, None)
+        user = db.get_user(user_id)
+
     emoji = config.CATEGORIES[category]['emoji']
     cat_name = config.CATEGORIES[category]['name']
 
@@ -298,8 +294,8 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Ты уже выполнил челлендж сегодня!
 
 🌟 Возвращайся завтра за новым заданием.
-💪 Продолжай развивать свою дисциплину!"""
 
+💪 Продолжай развивать свою дисциплину!"""
         keyboard = [
             [InlineKeyboardButton("◀️ Назад к категориям", callback_data='back_to_categories')],
         ]
@@ -317,6 +313,7 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_text = f"""{emoji} *Категория: {cat_name}*
 
 🎯 *Твой челлендж:*
+
 {challenge}
 
 ✨ Выполни задание и нажми кнопку!"""
@@ -1538,6 +1535,10 @@ def main():
     """Запуск бота"""
 
     application = Application.builder().token(config.BOT_TOKEN).build()
+    # При старте бота:
+    scheduler = AsyncIOScheduler(timezone="Europe/Minsk")
+    scheduler.add_job(check_and_reset_streaks, 'cron', hour=0, minute=0)
+    scheduler.start()
 
     # Установка команд меню
     async def post_init(app: Application):
