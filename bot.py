@@ -111,6 +111,41 @@ def get_user_level(total_completed: int) -> str:
     return level
 
 
+def get_progress_bar(total_completed: int) -> str:
+    """Прогресс-бар до следующего уровня"""
+    levels = sorted(config.LEVELS.items())
+
+    current_threshold = 0
+    current_name = levels[0][1]
+    next_threshold = None
+    next_name = None
+
+    for threshold, name in levels:
+        if total_completed >= threshold:
+            current_threshold = threshold
+            current_name = name
+        else:
+            next_threshold = threshold
+            next_name = name
+            break
+
+    if next_threshold is None:
+        return f"{current_name} 🏆 Максимальный уровень!"
+
+    progress = total_completed - current_threshold
+    total = next_threshold - current_threshold
+    filled = int((progress / total) * 10)
+    empty = 10 - filled
+
+    bar = "▓" * filled + "░" * empty
+
+    # Берём только эмодзи из названия уровня (первый символ)
+    current_emoji = current_name.split()[0]
+    next_emoji = next_name.split()[0]
+
+    return f"{current_emoji} {bar} {next_emoji}"
+
+
 def check_milestones(streak: int, total: int) -> list:
     """Проверка достижения milestone"""
     messages = []
@@ -220,6 +255,7 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = db.get_user(user_id)
     user_achievements = json.loads(user['achievements']) if user['achievements'] else []
     level = get_user_level(stats['total_completed'])
+    progress_bar = get_progress_bar(stats['total_completed'])
     coins = stats.get('coins', 0)
 
     # Статистика по категориям
@@ -235,6 +271,7 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔥 Streak: *{stats['streak']} дней*\n"
         f"✅ Выполнено: *{stats['total_completed']}* челленджей\n"
         f"⭐ Уровень: *{level}*\n"
+        f"`{progress_bar}`\n"
         f"💰 Монет: *{coins}*\n"
         f"🏆 Достижений: *{len(user_achievements)}/{len(config.ACHIEVEMENTS)}*"
     )
