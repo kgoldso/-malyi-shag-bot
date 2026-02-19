@@ -2,7 +2,6 @@ import logging
 import random
 from datetime import datetime, date
 import asyncio
-from typing import Dict, List
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -12,7 +11,6 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
-from telegram.error import BadRequest
 import config
 from database import Database
 from functools import wraps
@@ -59,6 +57,32 @@ logger = logging.getLogger(__name__)
 # Инициализация базы данных
 db = Database()
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from datetime import date, timedelta
+
+
+async def check_and_reset_streaks():
+    users = db.get_all_users()
+    today = date.today().isoformat()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+    for user_id in users:
+        user = db.get_user(user_id)
+        last = user.get('last_completed_date')
+
+        # Если последнее выполнение не вчера и не сегодня — сброс
+        if last != today and last != yesterday:
+            freeze_until = user.get('streak_freeze_until')
+            if freeze_until and date.fromisoformat(freeze_until) >= date.today():
+                continue  # заморозка активна — не сбрасываем
+            db.reset_streak(user_id)
+
+
+# При старте бота:
+scheduler = AsyncIOScheduler(timezone="Europe/Minsk")
+scheduler.add_job(check_and_reset_streaks, 'cron', hour=0, minute=0)
+scheduler.start()
+
 
 def get_user_level(total_completed: int) -> str:
     """Определение уровня пользователя"""
@@ -85,7 +109,7 @@ def check_milestones(streak: int, total: int) -> list:
     return messages
 
 
-def check_achievements(user_id: int, user_data: Dict) -> List[Dict]:
+def check_achievements(user_id: int, user_data: dict) -> list[dict]:
     """Проверка новых достижений"""
     new_achievements = []
     user_achievements = user_data.get('achievements', [])
@@ -130,18 +154,6 @@ def check_achievements(user_id: int, user_data: Dict) -> List[Dict]:
                 })
 
     return new_achievements
-
-
-async def delete_old_bot_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Удаление старого сообщения бота"""
-    if 'last_bot_message_id' in context.user_data:
-        try:
-            await context.bot.delete_message(
-                chat_id=chat_id,
-                message_id=context.user_data['last_bot_message_id']
-            )
-        except BadRequest:
-            pass  # Сообщение уже удалено или недоступно
 
 
 @ensure_user
@@ -222,7 +234,6 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
 
-@ensure_user
 async def challenge_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /challenge - показывает категории"""
     text = "🎯 *Выбери категорию челленджа!*\n\nВыбери категорию, чтобы получить задание на день:"
@@ -598,10 +609,6 @@ async def send_daily_reminder(context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ошибок"""
     logger.error(f"Update {update} caused error {context.error}")
-
-
-# bot.py
-# ... существующие импорты ...
 
 # ============= АДМИН ПАНЕЛЬ =============
 
