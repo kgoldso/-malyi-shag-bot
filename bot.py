@@ -468,6 +468,34 @@ async def another_challenge_handler(update: Update, context: ContextTypes.DEFAUL
     )
 
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "📖 *Помощь по боту 'Малый Шаг'*\n\n"
+        "🎯 *Как это работает:*\n"
+        "Каждый день выбирай категорию и выполняй маленькое задание. "
+        "Не пропускай дни — копи стрик и зарабатывай монеты!\n\n"
+        "*Команды:*\n"
+        "/start — главное меню\n"
+        "/help — это сообщение\n"
+        "/report — сообщить об ошибке\n\n"
+        "*Категории:*\n"
+        "💪 Спорт — физические активности\n"
+        "🧠 Мышление — саморазвитие и учёба\n"
+        "🎨 Креатив — творческие задания\n"
+        "🤝 Общение — социальные челленджи\n\n"
+        "*Магазин:*\n"
+        "🛡️ Заморозка стрика — защита от сброса\n"
+        "⚡ x2 монеты — двойная награда 7 дней\n\n"
+        "*Стрик сбрасывается в 00:00 если не выполнил задание за день.*"
+    )
+    keyboard = [[InlineKeyboardButton("🎯 Начать", callback_data='back_to_categories')]]
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+
 async def complete_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1626,15 +1654,11 @@ def main():
 
     # Установка команд меню
     async def post_init(app: Application):
-        from telegram import BotCommand
-        commands = [
-            BotCommand("start", "🌱 Начать работу"),
-            BotCommand("stats", "📊 Моя статистика"),
-            BotCommand("achievements", "🏆 Достижения"),
-            BotCommand("shop", "🛒 Магазин"),
-            BotCommand("report", "📝 Сообщить об ошибке"),
-        ]
-        await app.bot.set_my_commands(commands)
+        await application.bot.set_my_commands([
+            ("start", "Главное меню"),
+            ("help", "Помощь"),
+            ("report", "Сообщить об ошибке"),
+        ])
         logger.info("✅ Команды меню установлены")
 
     application.post_init = post_init
@@ -1647,6 +1671,7 @@ def main():
     application.add_handler(CommandHandler("report", report_command))
     application.add_handler(CommandHandler("challenge", challenge_command))
     application.add_handler(CommandHandler("shop", shop_command))
+    application.add_handler(CommandHandler("help", help_command))
 
     # Обычные callback
     application.add_handler(CallbackQueryHandler(category_handler, pattern='^cat_'))
