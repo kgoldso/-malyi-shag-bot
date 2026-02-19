@@ -1,5 +1,6 @@
 import logging
 import random
+import pytz
 from datetime import datetime, timedelta, date
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -1541,17 +1542,18 @@ def main():
 
     application = Application.builder().token(config.BOT_TOKEN).build()
     # При старте бота:
-    scheduler = AsyncIOScheduler(timezone="Europe/Minsk")
+    minsk_tz = pytz.timezone("Europe/Minsk")
+    scheduler = AsyncIOScheduler(timezone=minsk_tz)
     scheduler.add_job(
         check_and_reset_streaks,
         'date',
-        run_date=datetime.now() + timedelta(minutes=1),
+        run_date=datetime.now(minsk_tz) + timedelta(minutes=1),
         args=[application.bot]
     )
     scheduler.add_job(
         send_evening_reminder,
         'date',
-        run_date=datetime.now() + timedelta(minutes=1),
+        run_date=datetime.now(minsk_tz) + timedelta(minutes=1),
         args=[application.bot]
     )
     scheduler.start()
