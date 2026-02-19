@@ -1571,14 +1571,12 @@ def main():
         run_date=datetime.now() + timedelta(minutes=1),
         args=[application.bot]
     )
-
     scheduler.add_job(
         send_evening_reminder,
         'date',
         run_date=datetime.now() + timedelta(minutes=1),
         args=[application.bot]
     )
-
     scheduler.start()
 
     # Установка команд меню
