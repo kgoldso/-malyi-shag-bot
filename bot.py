@@ -59,21 +59,49 @@ logger = logging.getLogger(__name__)
 db = Database()
 
 
-async def check_and_reset_streaks():
+async def check_and_reset_streaks(bot):
     users = db.get_all_users()
     today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
 
     for user_id in users:
+        if user_id != config.ADMIN_ID:
+            continue
         user = db.get_user(user_id)
         last = user.get('last_completed_date')
 
-        # Если последнее выполнение не вчера и не сегодня — сброс
         if last != today and last != yesterday:
             freeze_until = user.get('streak_freeze_until')
             if freeze_until and date.fromisoformat(freeze_until) >= date.today():
-                continue  # заморозка активна — не сбрасываем
+                continue
             db.reset_streak(user_id)
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text="💔 Твой стрик сброшен — вчера не было выполнено задание.\n\n"
+                         "Но это не конец! Начни заново сегодня 💪"
+                )
+            except Exception:
+                pass
+
+
+async def send_evening_reminder(bot):
+    users = db.get_all_users()
+    today = date.today().isoformat()
+
+    for user_id in users:
+        if user_id != config.ADMIN_ID:  # временно — только себе
+            continue
+        user = db.get_user(user_id)
+        if user.get('last_completed_date') != today:
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text="⏰ Эй, ты ещё не выполнил челлендж сегодня!\n\n"
+                         "Осталось несколько часов — успей сохранить стрик 🔥"
+                )
+            except Exception:
+                pass
 
 
 def get_user_level(total_completed: int) -> str:
@@ -1537,7 +1565,20 @@ def main():
     application = Application.builder().token(config.BOT_TOKEN).build()
     # При старте бота:
     scheduler = AsyncIOScheduler(timezone="Europe/Minsk")
-    scheduler.add_job(check_and_reset_streaks, 'cron', hour=0, minute=0)
+    scheduler.add_job(
+        check_and_reset_streaks,
+        'date',
+        run_date=datetime.now() + timedelta(minutes=1),
+        args=[application.bot]
+    )
+
+    scheduler.add_job(
+        send_evening_reminder,
+        'date',
+        run_date=datetime.now() + timedelta(minutes=1),
+        args=[application.bot]
+    )
+
     scheduler.start()
 
     # Установка команд меню
