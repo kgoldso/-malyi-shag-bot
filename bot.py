@@ -90,15 +90,21 @@ async def send_evening_reminder(bot):
 
     for user_id in users:
         user = db.get_user(user_id)
-        if user.get('last_completed_date') != today:
-            try:
-                await bot.send_message(
-                    chat_id=user_id,
-                    text="⏰ Эй, ты ещё не выполнил челлендж сегодня!\n\n"
-                         "Осталось несколько часов — успей сохранить стрик 🔥"
-                )
-            except Exception:
-                pass
+        if user.get('last_completed_date') == today:
+            continue  # уже выполнил — не беспокоим
+
+        freeze_until = user.get('streak_freeze_until')
+        if freeze_until and date.fromisoformat(freeze_until) >= date.today():
+            continue  # заморозка активна — не беспокоим
+
+        try:
+            await bot.send_message(
+                chat_id=user_id,
+                text="⏰ Эй, ты ещё не выполнил челлендж сегодня!\n\n"
+                     "Осталось несколько часов — успей сохранить стрик 🔥"
+            )
+        except Exception:
+            pass
 
 
 def get_user_level(total_completed: int) -> str:
