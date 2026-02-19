@@ -608,29 +608,6 @@ async def back_to_categories_handler(update: Update, context: ContextTypes.DEFAU
     await query.edit_message_text(text, reply_markup=keyboard, parse_mode='Markdown')
 
 
-async def send_daily_reminder(context: ContextTypes.DEFAULT_TYPE):
-    """Отправка ежедневных напоминаний в 9:00 утра"""
-    users = db.get_all_users()
-
-    reminder_text = "Доброе утро! 🌅 Готов к новому челленджу?\n\nВыбери категорию:"
-    keyboard = get_category_keyboard()
-
-    for user_id in users:
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=reminder_text,
-                reply_markup=keyboard
-            )
-        except Exception as e:
-            logger.error(f"Не удалось отправить напоминание пользователю {user_id}: {e}")
-
-        # Задержка, чтобы не превысить лимиты Telegram
-        await asyncio.sleep(0.1)
-
-    logger.info(f"Отправлено напоминаний: {len(users)}")
-
-
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ошибок"""
     logger.error(f"Update {update} caused error {context.error}")
@@ -1643,14 +1620,6 @@ def main():
 
     # Обработчик ошибок
     application.add_error_handler(error_handler)
-
-    # Напоминания
-    job_queue = application.job_queue
-    job_queue.run_daily(
-        send_daily_reminder,
-        time=config.REMINDER_TIME,
-        days=(0, 1, 2, 3, 4, 5, 6)
-    )
 
     logger.info("Бот 'Малый Шаг' запущен!")
     logger.info(f"Напоминания настроены на {config.REMINDER_TIME.strftime('%H:%M')} {config.TIMEZONE}")
