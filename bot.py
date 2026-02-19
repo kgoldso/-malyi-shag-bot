@@ -346,7 +346,6 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = date.today().isoformat()
     can_complete = user['last_completed_date'] != today
 
-    # Если челлендж выдан не сегодня — сбрасываем
     if user.get('challenge_date') != today:
         db.update_challenge(user_id, None, None)
         user = db.get_user(user_id)
@@ -374,8 +373,25 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Антидубль — берём историю выданных для этой категории
+    history_key = f'recent_challenges_{category}'
+    recent = context.user_data.get(history_key, [])
+
     challenges = config.CATEGORIES[category]['challenges']
-    challenge = random.choice(challenges)
+    # Исключаем недавние, если есть из чего выбирать
+    available = [c for c in challenges if c not in recent]
+    if not available:
+        available = challenges
+        recent = []
+
+    challenge = random.choice(available)
+
+    # Обновляем историю (храним последние 5)
+    recent.append(challenge)
+    if len(recent) > 5:
+        recent.pop(0)
+    context.user_data[history_key] = recent
+
     db.update_challenge(user_id, challenge, category)
 
     message_text = f"""{emoji} *Категория: {cat_name}*
@@ -402,26 +418,36 @@ async def another_challenge_handler(update: Update, context: ContextTypes.DEFAUL
     user = db.get_user(user_id)
 
     if not user or not user['current_category']:
-        # Если нет текущей категории, показываем выбор
         text = "Сначала выбери категорию челленджа:"
         keyboard = get_category_keyboard()
         await query.edit_message_text(text, reply_markup=keyboard)
         return
 
-    # Проверка, не выполнил ли уже сегодня
     today = date.today().isoformat()
     can_complete = user['last_completed_date'] != today
 
     if not can_complete:
-        # Если уже выполнил, не даем менять челлендж
         await query.answer("❌ Ты уже выполнил челлендж сегодня! Приходи завтра 😊", show_alert=True)
         return
 
     category = user['current_category']
 
-    # Новый случайный челлендж
+    # Антидубль — та же логика что в category_handler
+    history_key = f'recent_challenges_{category}'
+    recent = context.user_data.get(history_key, [])
+
     challenges = config.CATEGORIES[category]['challenges']
-    challenge = random.choice(challenges)
+    available = [c for c in challenges if c not in recent]
+    if not available:
+        available = challenges
+        recent = []
+
+    challenge = random.choice(available)
+
+    recent.append(challenge)
+    if len(recent) > 5:
+        recent.pop(0)
+    context.user_data[history_key] = recent
 
     db.update_challenge(user_id, challenge, category)
 
@@ -435,11 +461,9 @@ async def another_challenge_handler(update: Update, context: ContextTypes.DEFAUL
 
 ✨ Выполни задание и нажми кнопку!"""
 
-    keyboard = get_challenge_keyboard(can_complete)
-
     await query.edit_message_text(
         message_text,
-        reply_markup=keyboard,
+        reply_markup=get_challenge_keyboard(can_complete),
         parse_mode='Markdown'
     )
 
