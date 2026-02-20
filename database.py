@@ -1,8 +1,16 @@
 import os
 import json
+import pytz
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
 import config
+
+MINSK_TZ = pytz.timezone('Europe/Minsk')
+
+def _today_minsk() -> date:
+    """Текущая дата по минскому времени (UTC+3)."""
+    return datetime.now(MINSK_TZ).date()
+
 
 # Определяем тип БД
 USE_POSTGRES = os.getenv('DATABASE_URL') is not None
@@ -242,7 +250,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            today = date.today().isoformat()
+            today = _today_minsk().isoformat()
             param = '%s' if self.use_postgres else '?'
             cursor.execute(f'''
                 UPDATE users
@@ -470,7 +478,7 @@ class Database:
 
     def count_user_reports_today(self, user_id: int) -> int:
         """Подсчитать жалобы за сегодня"""
-        today = date.today().isoformat()
+        today = _today_minsk().isoformat()
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -505,7 +513,7 @@ class Database:
                 UPDATE users
                 SET current_challenge = {param}, current_category = {param}, challenge_date = {param}
                 WHERE user_id = {param}
-            ''', (challenge, category, date.today().isoformat(), user_id))
+            ''', (challenge, category, _today_minsk().isoformat(), user_id))
             conn.commit()
         finally:
             conn.close()
@@ -516,7 +524,8 @@ class Database:
         if not user:
             return {'success': False, 'message': 'Пользователь не найден'}
 
-        today = date.today().isoformat()
+        today_dt = _today_minsk()
+        today = today_dt.isoformat()
 
         # Проверка, не завершал ли уже сегодня
         if user.get('last_completed_date') == today:
@@ -530,20 +539,20 @@ class Database:
             new_streak = 1
         else:
             last_date_obj = date.fromisoformat(last_date)
-            diff = (date.today() - last_date_obj).days
+            diff = (today_dt - last_date_obj).days
             if diff == 1:
                 new_streak = current_streak + 1
             else:
                 # Проверяем заморозку стрика
                 freeze_until = user.get('streak_freeze_until')
-                if freeze_until and date.fromisoformat(freeze_until) >= date.today():
+                if freeze_until and date.fromisoformat(freeze_until) >= today_dt:
                     new_streak = current_streak  # заморозка активна — стрик сохраняем
                 else:
                     new_streak = 1  # пропустил день — сброс
 
         # Проверяем активен ли x2 бонус
         double_until = user.get('double_coins_until')
-        if double_until and date.fromisoformat(double_until) >= date.today():
+        if double_until and date.fromisoformat(double_until) >= today_dt:
             coins_earned = 10
         else:
             coins_earned = 5
@@ -614,7 +623,7 @@ class Database:
         if user['coins'] < cost:
             return {'success': False, 'message': f'Недостаточно монет! Нужно {cost} 🪙'}
 
-        today = date.today()
+        today = _today_minsk()
         current_freeze = user.get('streak_freeze_until')
         if current_freeze and date.fromisoformat(current_freeze) >= today:
             base = date.fromisoformat(current_freeze)  # продлеваем существующую
@@ -647,7 +656,7 @@ class Database:
         if user['coins'] < cost:
             return {'success': False, 'message': f'Недостаточно монет! Нужно {cost} 🪙'}
 
-        today = date.today()
+        today = _today_minsk()
         current_double = user.get('double_coins_until')
         if current_double and date.fromisoformat(current_double) >= today:
             base = date.fromisoformat(current_double)  # продлеваем существующий

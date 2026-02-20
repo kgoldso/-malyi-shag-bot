@@ -17,6 +17,12 @@ import config
 from database import Database
 from functools import wraps
 
+MINSK_TZ = pytz.timezone('Europe/Minsk')
+
+def _today_minsk():
+    """Текущая дата по минскому времени (UTC+3)."""
+    return datetime.now(MINSK_TZ).date()
+
 
 def escape_markdown(text):
     """Экранирует специальные символы Markdown"""
@@ -61,9 +67,10 @@ db = Database()
 
 
 async def check_and_reset_streaks(bot):
+    today_dt = _today_minsk()
+    today = today_dt.isoformat()
+    yesterday = (today_dt - timedelta(days=1)).isoformat()
     users = db.get_all_users()
-    today = date.today().isoformat()
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
 
     for user_id in users:
         user = db.get_user(user_id)
@@ -71,22 +78,23 @@ async def check_and_reset_streaks(bot):
 
         if last != today and last != yesterday:
             freeze_until = user.get('streak_freeze_until')
-            if freeze_until and date.fromisoformat(freeze_until) >= date.today():
+            if freeze_until and date.fromisoformat(freeze_until) >= today_dt:
                 continue
-            db.reset_streak(user_id)
-            try:
-                await bot.send_message(
-                    chat_id=user_id,
-                    text="💔 Твой стрик сброшен — вчера не было выполнено задание.\n\n"
-                         "Но это не конец! Начни заново сегодня 💪"
-                )
-            except Exception:
-                pass
+            if user.get('streak', 0) > 0:
+                db.reset_streak(user_id)
+                try:
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text="💔 Твой стрик сброшен — вчера не было выполнено задание.\n\n"
+                             "Но это не конец! Начни заново сегодня 💪"
+                    )
+                except Exception:
+                    pass
 
 
 async def send_evening_reminder(bot):
+    today = _today_minsk().isoformat()
     users = db.get_all_users()
-    today = date.today().isoformat()
 
     for user_id in users:
         user = db.get_user(user_id)
@@ -94,7 +102,7 @@ async def send_evening_reminder(bot):
             continue  # уже выполнил — не беспокоим
 
         freeze_until = user.get('streak_freeze_until')
-        if freeze_until and date.fromisoformat(freeze_until) >= date.today():
+        if freeze_until and date.fromisoformat(freeze_until) >= _today_minsk():
             continue  # заморозка активна — не беспокоим
 
         try:
@@ -263,7 +271,7 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     level = get_user_level(stats['total_completed'])
     progress_bar = get_progress_bar(stats['total_completed'])
     coins = stats.get('coins', 0)
-    today = date.today().isoformat()
+    today = _today_minsk().isoformat()
 
     streak = stats['streak']
     longest_streak = user.get('longest_streak', 0)
@@ -273,7 +281,7 @@ async def profile_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         streak_status = f"🔥 Streak: *{streak} дней* ✅"
     else:
         freeze_until = user.get('streak_freeze_until')
-        if freeze_until and date.fromisoformat(freeze_until) >= date.today():
+        if freeze_until and date.fromisoformat(freeze_until) >= _today_minsk():
             streak_status = f"🔥 Streak: *{streak} дней* 🛡️"
         else:
             streak_status = f"🔥 Streak: *{streak} дней* ⚠️"
@@ -363,7 +371,7 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         user = db.get_user(user_id)
 
-    today = date.today().isoformat()
+    today = _today_minsk().isoformat()
     can_complete = user['last_completed_date'] != today
 
     if user.get('challenge_date') != today:
@@ -443,7 +451,7 @@ async def another_challenge_handler(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text(text, reply_markup=keyboard)
         return
 
-    today = date.today().isoformat()
+    today = _today_minsk().isoformat()
     can_complete = user['last_completed_date'] != today
 
     if not can_complete:
@@ -766,7 +774,7 @@ async def admin_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     users = db.get_all_users()
     total_users = len(users)
-    today = date.today().isoformat()
+    today = _today_minsk().isoformat()
 
     conn = db.get_connection()
     cursor = conn.cursor()
@@ -1474,7 +1482,7 @@ async def shop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = db.get_user(user_id)
     coins = user['coins'] if user else 0
 
-    today = date.today()
+    today = _today_minsk()
     freeze_until = user.get('streak_freeze_until') if user else None
     double_until = user.get('double_coins_until') if user else None
 
