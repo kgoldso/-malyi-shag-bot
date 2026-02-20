@@ -1475,16 +1475,14 @@ async def shop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
         await query.answer()
-        user_id = query.from_user.id
-    else:
-        user_id = update.effective_user.id
-
+    user_id = query.from_user.id if query else update.effective_user.id
     user = db.get_user(user_id)
     coins = user['coins'] if user else 0
-
     today = _today_minsk()
+
     freeze_until = user.get('streak_freeze_until') if user else None
     double_until = user.get('double_coins_until') if user else None
+    last_coinflip = user.get('lastcoinflipdate') if user else None
 
     freeze_status = ""
     if freeze_until and date.fromisoformat(freeze_until) >= today:
@@ -1493,6 +1491,10 @@ async def shop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     double_status = ""
     if double_until and date.fromisoformat(double_until) >= today:
         double_status = f" ✅ _(до {double_until})_"
+
+    coinflip_status = ""
+    if last_coinflip == today.isoformat():
+        coinflip_status = " ✅ _(сыграно сегодня)_"
 
     text = (
         f"🛒 *Магазин*\n\n"
@@ -1503,20 +1505,27 @@ async def shop_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"❄️ *Заморозка стрика на 3 дня* — 120 🪙{freeze_status}\n"
         f"_Три дня пропусков без потери стрика_\n\n"
         f"⚡ *x2 монеты на 7 дней* — 50 🪙{double_status}\n"
-        f"_Получай 10 монет вместо 5 за каждый челлендж_"
+        f"_Получай 10 монет вместо 5 за каждый челлендж_\n\n"
+        f"🎲 *Коинфлип* — угадай кубик!{coinflip_status}\n"
+        f"_Ставь 5–20 монет, угадай исход — 1 раз в день_"
     )
 
     keyboard = [
         [InlineKeyboardButton("🛡️ Заморозка 1 день — 50 🪙", callback_data='buy_freeze_1')],
         [InlineKeyboardButton("❄️ Заморозка 3 дня — 120 🪙", callback_data='buy_freeze_3')],
         [InlineKeyboardButton("⚡ x2 монеты 7 дней — 50 🪙", callback_data='buy_double')],
+        [InlineKeyboardButton("🎲 Коинфлип", callback_data='coinflip')],
         [InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')],
     ]
 
     if query:
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
     else:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await update.message.reply_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
 
 
 async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1569,6 +1578,304 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [[InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+
+# ============= КОИНФЛИП =============
+
+# In-memory set: защита от double-click в момент ожидания анимации кубика.
+# Работает в рамках одного процесса (Railway — один инстанс).
+_coinflip_in_progress: set = set()
+
+
+async def coinflip_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Открыть меню коинфлипа из магазина"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    user = db.get_user(user_id)
+
+    if not user:
+        keyboard = [[InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')]]
+        await query.edit_message_text(
+            "❌ Пользователь не найден.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    today = _today_minsk().isoformat()
+    last_coinflip = user.get('lastcoinflipdate')
+    coins = user['coins']
+
+    # Уже играл сегодня — показываем сообщение БЕЗ кнопок ставки
+    if last_coinflip == today:
+        text = (
+            "🎲 *Коинфлип*\n\n"
+            "❌ Ты уже играл в коинфлип сегодня.\n\n"
+            "Попробуй снова завтра — попытка обновляется каждый день в 00:00 🕐"
+        )
+        keyboard = [[InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')]]
+        await query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
+        return
+
+    # Не хватает монет даже на минимальную ставку
+    if coins < 5:
+        text = (
+            "🎲 *Коинфлип*\n\n"
+            f"❌ У тебя только *{coins} монет* — недостаточно для игры.\n"
+            "Минимальная ставка: *5 монет* 🪙\n\n"
+            "Выполняй челленджи, чтобы заработать монеты! 💪"
+        )
+        keyboard = [[InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')]]
+        await query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
+        return
+
+    text = (
+        "🎲 *Коинфлип — игра с кубиком*\n\n"
+        f"💰 Твой баланс: *{coins} монет*\n\n"
+        "📋 *Правила:*\n"
+        "• Выбери ставку (5 / 10 / 15 / 20 монет)\n"
+        "• Предскажи исход кубика\n"
+        "• Угадал → получаешь ставку ×2 💰\n"
+        "• Не угадал → теряешь ставку 💸\n\n"
+        "⚠️ Одна попытка в сутки\n\n"
+        "👇 Выбери ставку:"
+    )
+
+    # Показываем только те ставки, на которые хватает монет
+    bet_row = []
+    for bet_amount in [5, 10, 15, 20]:
+        if coins >= bet_amount:
+            bet_row.append(
+                InlineKeyboardButton(f"🪙 {bet_amount}", callback_data=f'coinflip_bet_{bet_amount}')
+            )
+
+    keyboard = [
+        bet_row,
+        [InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')],
+    ]
+    await query.edit_message_text(
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+    )
+
+
+async def coinflip_bet_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пользователь выбрал ставку — показываем выбор исхода"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    bet = int(query.data.replace('coinflip_bet_', ''))
+
+    # Повторная проверка баланса и даты (мог пройти некоторый период)
+    user = db.get_user(user_id)
+    if not user:
+        keyboard = [[InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')]]
+        await query.edit_message_text(
+            "❌ Ошибка. Попробуй снова.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    today = _today_minsk().isoformat()
+    if user.get('lastcoinflipdate') == today:
+        keyboard = [[InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')]]
+        await query.edit_message_text(
+            "🎲 *Коинфлип*\n\n❌ Ты уже играл сегодня. Приходи завтра!",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return
+
+    if user['coins'] < bet:
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='coinflip')]]
+        await query.edit_message_text(
+            f"❌ Недостаточно монет для ставки *{bet}* 🪙\n"
+            f"Твой баланс: *{user['coins']}* монет",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return
+
+    # Сохраняем ставку — монеты ещё НЕ списаны
+    context.user_data['coinflip_bet'] = bet
+    logger.info(f"[COINFLIP] User {user_id} selected bet={bet}")
+
+    text = (
+        f"🎲 *Коинфлип*\n\n"
+        f"💰 Ставка: *{bet} монет*\n"
+        f"🏆 Выигрыш при угадывании: *{bet * 2} монет*\n\n"
+        f"Выбери исход кубика (🎲 1–6):\n\n"
+        f"🔼 *Больше 3* — выпадет 4, 5 или 6\n"
+        f"🔽 *3 или меньше* — выпадет 1, 2 или 3"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🔼 Больше 3", callback_data='coinflip_high'),
+            InlineKeyboardButton("🔽 3 или меньше", callback_data='coinflip_low'),
+        ],
+        [InlineKeyboardButton("❌ Отмена", callback_data='coinflip_cancel')],
+    ]
+    await query.edit_message_text(
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+    )
+
+
+async def coinflip_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена — возвращаемся в магазин БЕЗ изменения баланса"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    context.user_data.pop('coinflip_bet', None)
+    logger.info(f"[COINFLIP] User {user_id} cancelled (no coins changed)")
+    # Передаём управление shop_handler (он сам сделает query.answer())
+    await shop_handler(update, context)
+
+
+async def coinflip_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пользователь выбрал исход (high/low) — бросаем кубик и подводим итог"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    # --- Anti-double-click: проверяем in-progress ---
+    if user_id in _coinflip_in_progress:
+        await query.answer("⏳ Кубик уже брошен, подожди результата!", show_alert=True)
+        return
+
+    bet = context.user_data.get('coinflip_bet')
+    if bet is None:
+        # Ставка не найдена — устаревшее состояние (напр. после перезапуска бота)
+        keyboard = [[InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')]]
+        await query.edit_message_text(
+            "❌ Ставка не найдена. Начни игру заново.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    choice = query.data  # 'coinflip_high' или 'coinflip_low'
+    choice_text = "🔼 Больше 3" if choice == 'coinflip_high' else "🔽 3 или меньше"
+
+    # Блокируем повторные нажатия на время анимации
+    _coinflip_in_progress.add(user_id)
+
+    try:
+        # 1. Убираем кнопки немедленно (UI-защита от двойного клика)
+        await query.edit_message_text(
+            f"🎲 *Коинфлип*\n\n"
+            f"💰 Ставка: *{bet} монет*\n"
+            f"Твой выбор: *{choice_text}*\n\n"
+            f"⏳ Бросаю кубик...",
+            parse_mode='Markdown'
+            # Без reply_markup — кнопки убраны
+        )
+
+        # 2. Атомарная проверка в БД + фиксация даты (lock против повторной игры)
+        start_result = db.coinflip_start(user_id, bet)
+        if not start_result['success']:
+            logger.warning(
+                f"[COINFLIP] User {user_id} coinflip_start rejected: {start_result['message']}"
+            )
+            keyboard = [[InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')]]
+            await query.edit_message_text(
+                f"❌ {start_result['message']}",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return
+
+        logger.info(f"[COINFLIP] User {user_id} game started: bet={bet}, choice={choice}")
+
+        # 3. Бросаем кубик — sendDice отправляет анимацию отдельным сообщением
+        dice_msg = await context.bot.send_dice(
+            chat_id=query.message.chat_id,
+            emoji='🎲'
+        )
+        dice_value = dice_msg.dice.value
+
+        logger.info(f"[COINFLIP] User {user_id} dice rolled: value={dice_value}")
+
+        # 4. Ждём окончания анимации кубика (~4 сек)
+        await asyncio.sleep(4)
+
+        # 5. Определяем победителя
+        if choice == 'coinflip_high':
+            won = dice_value > 3
+        else:  # coinflip_low
+            won = dice_value <= 3
+
+        # 6. Применяем изменение монет в БД
+        finish_result = db.coinflip_finish(user_id, bet, won)
+
+        if not finish_result['success']:
+            logger.error(
+                f"[COINFLIP] User {user_id} coinflip_finish FAILED: {finish_result['message']}"
+            )
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=(
+                    "⚠️ Кубик брошен, но произошла ошибка при обновлении баланса.\n"
+                    "Свяжись с поддержкой — твои монеты в безопасности. 🙏"
+                ),
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("◀️ В магазин", callback_data='shop')]]
+                )
+            )
+            return
+
+        new_coins = finish_result['new_coins']
+
+        # 7. Формируем результат
+        if won:
+            result_emoji = "🎉"
+            result_header = "Ты угадал! Победа!"
+            coins_line = f"Выигрыш: *+{bet} монет* 💰"
+        else:
+            result_emoji = "😔"
+            result_header = "Не угадал. Удачи в следующий раз!"
+            coins_line = f"Проигрыш: *−{bet} монет* 💸"
+
+        result_text = (
+            f"🎲 Выпало: *{dice_value}*\n\n"
+            f"{result_emoji} *{result_header}*\n\n"
+            f"Твой выбор: *{choice_text}*\n"
+            f"{coins_line}\n"
+            f"Баланс: *{new_coins} монет* 🪙"
+        )
+
+        logger.info(
+            f"[COINFLIP] User {user_id} RESULT: dice={dice_value}, choice={choice}, "
+            f"won={won}, bet={bet}, new_coins={new_coins}"
+        )
+
+        keyboard = [[InlineKeyboardButton("◀️ Назад в магазин", callback_data='shop')]]
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=result_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+
+    except Exception as e:
+        logger.error(f"[COINFLIP] User {user_id} unexpected error: {e}", exc_info=True)
+        try:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="❌ Произошла ошибка во время игры. Попробуй позже.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("◀️ В магазин", callback_data='shop')]]
+                )
+            )
+        except Exception:
+            pass
+
+    finally:
+        # Всегда снимаем блокировку и чистим ставку
+        _coinflip_in_progress.discard(user_id)
+        context.user_data.pop('coinflip_bet', None)
 
 
 async def back_to_main_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1713,6 +2020,10 @@ def main():
     application.add_handler(CallbackQueryHandler(back_to_main_handler, pattern='^back_to_main$'))
     application.add_handler(CallbackQueryHandler(profile_handler, pattern='^profile$'))
     application.add_handler(CallbackQueryHandler(leaderboard_handler, pattern='^leaderboard$'))
+    application.add_handler(CallbackQueryHandler(coinflip_menu_handler, pattern='^coinflip$'))
+    application.add_handler(CallbackQueryHandler(coinflip_bet_handler, pattern='^coinflip_bet_'))
+    application.add_handler(CallbackQueryHandler(coinflip_choice_handler, pattern='^coinflip_(high|low)$'))
+    application.add_handler(CallbackQueryHandler(coinflip_cancel_handler, pattern='^coinflip_cancel$'))
 
     # Админ callback
     application.add_handler(CallbackQueryHandler(admin_stats_handler, pattern='^admin_stats$'))

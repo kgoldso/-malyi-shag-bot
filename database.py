@@ -140,6 +140,7 @@ class Database:
                 cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_freeze_until TEXT")
                 cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS double_coins_until TEXT")
                 cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS challenge_date TEXT")
+                cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS lastcoinflipdate TEXT")
             else:
                 cursor.execute("PRAGMA table_info(users)")
                 columns = [col[1] for col in cursor.fetchall()]
@@ -151,6 +152,8 @@ class Database:
                     cursor.execute('ALTER TABLE users ADD COLUMN streak_freeze_until TEXT')
                 if 'double_coins_until' not in columns:
                     cursor.execute('ALTER TABLE users ADD COLUMN double_coins_until TEXT')
+                if 'lastcoinflipdate' not in columns:
+                    cursor.execute('ALTER TABLE users ADD COLUMN lastcoinflipdate TEXT')
         except Exception as e:
             pass
 
@@ -680,3 +683,104 @@ class Database:
             return {'success': False, 'message': str(e)}
         finally:
             conn.close()
+
+    def coinflip_start(self, user_id: int, bet: int) -> Dict[str, Any]:
+        """
+        Атомарно проверяет условия и фиксирует дату игры.
+        Монеты ещё НЕ списываются — только ставим отметку 'играл сегодня'.
+        Это одновременно и lock против параллельных сессий.
+        """
+        today = _today_minsk().isoformat()
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            param = '%s' if self.use_postgres else '?'
+            # Для Postgres используем FOR UPDATE (row-level lock)
+            if self.use_postgres:
+                cursor.execute(
+                    f'SELECT coins, lastcoinflipdate FROM users WHERE user_id = {param} FOR UPDATE',
+                    (user_id,)
+                )
+            else:
+                cursor.execute(
+                    f'SELECT coins, lastcoinflipdate FROM users WHERE user_id = {param}',
+                    (user_id,)
+                )
+            row = cursor.fetchone()
+            if not row:
+                return {'success': False, 'message': 'Пользователь не найден'}
+
+            coins, last_coinflip = row[0], row[1]
+
+            if last_coinflip == today:
+                return {
+                    'success': False,
+                    'message': 'Ты уже играл в коинфлип сегодня. Попробуй снова завтра! 🎲'
+                }
+            if coins < bet:
+                return {
+                    'success': False,
+                    'message': f'Недостаточно монет! У тебя *{coins}* 🪙, нужно *{bet}* 🪙'
+                }
+
+            # Фиксируем: "уже играл сегодня" — это и lock, и проверка
+            cursor.execute(
+                f'UPDATE users SET lastcoinflipdate = {param} WHERE user_id = {param}',
+                (today, user_id)
+            )
+            conn.commit()
+            return {'success': True, 'coins': coins}
+
+        except Exception as e:
+            conn.rollback()
+            return {'success': False, 'message': f'Ошибка БД: {str(e)}'}
+        finally:
+            conn.close()
+
+    def coinflip_finish(self, user_id: int, bet: int, won: bool) -> Dict[str, Any]:
+        """
+        Атомарно применяет результат: +bet (победа) или -bet (поражение).
+        Вызывается только после успешного coinflip_start.
+        Монеты никогда не уходят ниже нуля.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            param = '%s' if self.use_postgres else '?'
+            if self.use_postgres:
+                cursor.execute(
+                    f'SELECT coins FROM users WHERE user_id = {param} FOR UPDATE',
+                    (user_id,)
+                )
+            else:
+                cursor.execute(
+                    f'SELECT coins FROM users WHERE user_id = {param}',
+                    (user_id,)
+                )
+            row = cursor.fetchone()
+            if not row:
+                return {'success': False, 'message': 'Пользователь не найден'}
+
+            coins = row[0]
+            if won:
+                # Выиграл: ставка не была списана, добавляем выигрыш (+bet)
+                # Итог: пользователь рисковал bet, получает bet*2 — net +bet
+                new_coins = coins + bet
+            else:
+                # Проиграл: списываем ставку
+                new_coins = max(0, coins - bet)
+
+            cursor.execute(
+                f'UPDATE users SET coins = {param} WHERE user_id = {param}',
+                (new_coins, user_id)
+            )
+            conn.commit()
+            return {'success': True, 'new_coins': new_coins}
+
+        except Exception as e:
+            conn.rollback()
+            return {'success': False, 'message': f'Ошибка БД: {str(e)}'}
+        finally:
+            conn.close()
+
+
