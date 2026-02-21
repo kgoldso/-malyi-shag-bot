@@ -913,7 +913,8 @@ async def admin_broadcast_all_handler(update: Update, context: ContextTypes.DEFA
     await query.edit_message_text(
         "📢 *Рассылка всем пользователями*\n\n"
         "Отправьте сообщение любого типа:\n"
-        "\(текст, фото, видео, голосовое, документ, стикер и т\.д\.\)",
+        "\\(текст, фото, видео, голосовое, документ, стикер и т\\.д\\.\\)\\n",
+
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
@@ -933,7 +934,8 @@ async def admin_broadcast_one_handler(update: Update, context: ContextTypes.DEFA
 
     await query.edit_message_text(
         "👤 *Отправить сообщение пользователю*\n\n"
-        "Шаг 1: отправьте *только USER\_ID* получателя\n"
+        "Шаг 1: отправьте *только USER\\_ID* получателя\\n"
+
         "Например: `123456789`",
         parse_mode='Markdown'
     )
@@ -2079,10 +2081,7 @@ def main():
 
     # Обработчик текстовых сообщений (ПОСЛЕДНИМ!)
     # Расширенный фильтр: текст + медиа для рассылки
-    _broadcast_filter = (
-        filters.TEXT | filters.PHOTO | filters.VIDEO | filters.VOICE |
-        filters.DOCUMENT | filters.STICKER | filters.AUDIO | filters.VIDEO_NOTE
-    )
+    _broadcast_filter = filters.ALL
     application.add_handler(MessageHandler(_broadcast_filter & ~filters.COMMAND, admin_message_handler))
 
     # Обработчик ошибок
