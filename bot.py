@@ -860,6 +860,22 @@ async def admin_users_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+async def send_any_message(bot, chat_id: int, source_msg) -> bool:
+    """
+    Копирует сообщение любого типа через copy_message.
+    Не показывает пометку Переслано. Возвращает True при успехе.
+    """
+    try:
+        await bot.copy_message(
+            chat_id=chat_id,
+            from_chat_id=source_msg.chat_id,
+            message_id=source_msg.message_id,
+        )
+        return True
+    except Exception:
+        return False
+
+
 # ============= РАССЫЛКА =============
 
 async def admin_broadcast_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -895,8 +911,9 @@ async def admin_broadcast_all_handler(update: Update, context: ContextTypes.DEFA
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_broadcast_menu')]]
 
     await query.edit_message_text(
-        "📢 *Рассылка всем пользователям*\n\n"
-        "Отправьте текст сообщения:",
+        "📢 *Рассылка всем пользователями*\n\n"
+        "Отправьте сообщение любого типа:\n"
+        "\(текст, фото, видео, голосовое, документ, стикер и т\.д\.\)",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
@@ -916,13 +933,12 @@ async def admin_broadcast_one_handler(update: Update, context: ContextTypes.DEFA
 
     await query.edit_message_text(
         "👤 *Отправить сообщение пользователю*\n\n"
-        "Формат: `USER_ID текст сообщения`\n\n"
-        "Например: `123456789 Привет!`",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        "Шаг 1: отправьте *только USER\_ID* получателя\n"
+        "Например: `123456789`",
         parse_mode='Markdown'
     )
 
-    context.user_data['awaiting_broadcast'] = 'one'
+    context.user_data['awaiting_broadcast'] = 'one_waiting_id'
 
 
 async def admin_broadcast_multiple_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -937,14 +953,12 @@ async def admin_broadcast_multiple_handler(update: Update, context: ContextTypes
 
     await query.edit_message_text(
         "👥 *Отправить нескольким пользователям*\n\n"
-        "Формат (ID через пробел, потом текст):\n"
-        "`ID1 ID2 ID3 | текст сообщения`\n\n"
-        "Например:\n`123 456 789 | Привет всем!`",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        "Шаг 1: отправьте ID через пробел\n"
+        "Например: `123456789 987654321 111222333`",
         parse_mode='Markdown'
     )
 
-    context.user_data['awaiting_broadcast'] = 'multiple'
+    context.user_data['awaiting_broadcast'] = 'multiple_waiting_ids'
 
 
 # ============= УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ =============
@@ -1262,62 +1276,78 @@ async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     # Рассылка всем
     if context.user_data.get('awaiting_broadcast') == 'all':
         context.user_data['awaiting_broadcast'] = None
-
         users = db.get_all_users()
         sent = 0
         failed = 0
-
         await update.message.reply_text(f"📤 Начинаю рассылку для {len(users)} пользователей...")
-
         for target_user_id in users:
-            try:
-                await context.bot.send_message(chat_id=target_user_id, text=text)
+            ok = await send_any_message(context.bot, target_user_id, update.message)
+            if ok:
                 sent += 1
-                await asyncio.sleep(0.05)
-            except Exception as e:
+            else:
                 failed += 1
-
-        await update.message.reply_text(
-            f"✅ Рассылка завершена!\n\n📤 Отправлено: {sent}\n❌ Ошибок: {failed}"
-        )
+            import asyncio
+            await asyncio.sleep(0.05)
+        await update.message.reply_text(f"✅ Рассылка завершена!\n\n📤 Отправлено: {sent}\n❌ Ошибок: {failed}")
         return
 
     # Рассылка одному
-    if context.user_data.get('awaiting_broadcast') == 'one':
+    if context.user_data.get('awaiting_broadcast') == 'one_waiting_id':
+        msg_text = getattr(update.message, 'text', None)
+        if msg_text is None or not msg_text.strip().isdigit():
+            await update.message.reply_text('❌ Введите корректный числовой USER_ID')
+            return
+        context.user_data['broadcast_one_target'] = int(msg_text.strip())
+        context.user_data['awaiting_broadcast'] = 'one_waiting_msg'
+        await update.message.reply_text(
+            f'✅ ID `{msg_text.strip()}` принят.\n'
+            'Шаг 2: теперь отправьте сообщение любого типа для этого пользователя.',
+            parse_mode='Markdown'
+        )
+        return
+
+    elif context.user_data.get('awaiting_broadcast') == 'one_waiting_msg':
+        target_user_id = context.user_data.pop('broadcast_one_target', None)
         context.user_data['awaiting_broadcast'] = None
-
-        try:
-            parts = text.split(' ', 1)
-            target_user_id = int(parts[0])
-            message = parts[1]
-
-            await context.bot.send_message(chat_id=target_user_id, text=message)
-            await update.message.reply_text(f"✅ Сообщение отправлено пользователю {target_user_id}")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}")
+        if target_user_id is None:
+            await update.message.reply_text('❌ ID не найден, начните заново.')
+            return
+        ok = await send_any_message(context.bot, target_user_id, update.message)
+        if ok:
+            await update.message.reply_text(f'✅ Сообщение отправлено пользователю {target_user_id}')
+        else:
+            await update.message.reply_text(f'❌ Ошибка отправки пользователю {target_user_id}')
         return
 
     # Рассылка нескольким
-    if context.user_data.get('awaiting_broadcast') == 'multiple':
+    if context.user_data.get('awaiting_broadcast') == 'multiple_waiting_ids':
+        msg_text = getattr(update.message, 'text', '')
+        if not msg_text:
+            await update.message.reply_text('❌ Введите ID через пробел')
+            return
+        ids = [int(x) for x in msg_text.strip().split() if x.strip().isdigit()]
+        if not ids:
+            await update.message.reply_text('❌ Не найдено ни одного корректного ID')
+            return
+        context.user_data['broadcast_multiple_targets'] = ids
+        context.user_data['awaiting_broadcast'] = 'multiple_waiting_msg'
+        await update.message.reply_text(
+            f'✅ Принято {len(ids)} ID.\n'
+            'Шаг 2: отправьте сообщение любого типа для рассылки.'
+        )
+        return
+
+    elif context.user_data.get('awaiting_broadcast') == 'multiple_waiting_msg':
+        ids = context.user_data.pop('broadcast_multiple_targets', [])
         context.user_data['awaiting_broadcast'] = None
-
-        try:
-            ids_part, message = text.split('|', 1)
-            ids = [int(x.strip()) for x in ids_part.strip().split()]
-            message = message.strip()
-
-            sent = 0
-            for target_user_id in ids:
-                try:
-                    await context.bot.send_message(chat_id=target_user_id, text=message)
-                    sent += 1
-                    await asyncio.sleep(0.05)
-                except:
-                    pass
-
-            await update.message.reply_text(f"✅ Отправлено {sent} из {len(ids)} пользователям")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}\n\nФормат: `ID1 ID2 | текст`", parse_mode='Markdown')
+        sent = 0
+        for target_user_id in ids:
+            ok = await send_any_message(context.bot, target_user_id, update.message)
+            if ok:
+                sent += 1
+            import asyncio
+            await asyncio.sleep(0.05)
+        await update.message.reply_text(f'✅ Отправлено {sent} из {len(ids)} пользователям')
         return
 
     # Удаление пользователя
@@ -2048,7 +2078,12 @@ def main():
     application.add_handler(CallbackQueryHandler(admin_warn_report_handler, pattern='^admin_warn_'))
 
     # Обработчик текстовых сообщений (ПОСЛЕДНИМ!)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_message_handler))
+    # Расширенный фильтр: текст + медиа для рассылки
+    _broadcast_filter = (
+        filters.TEXT | filters.PHOTO | filters.VIDEO | filters.VOICE |
+        filters.DOCUMENT | filters.STICKER | filters.AUDIO | filters.VIDEO_NOTE
+    )
+    application.add_handler(MessageHandler(_broadcast_filter & ~filters.COMMAND, admin_message_handler))
 
     # Обработчик ошибок
     application.add_error_handler(error_handler)
